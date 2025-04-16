@@ -26,9 +26,10 @@ Mango is not a drop-in AES clone — it is a full cryptographic workbench and ci
 
 ---
 
-## Performance & Design Goals
+## Design Goals
 
-Mango is designed to **outperform AES in speed**, and to **rival it in cryptographic robustness**, particularly when data is structured, repetitive, or semi-predictable.
+Mango delivers **AES-class cryptographic strength** with **significantly faster execution**.  
+Its adaptive engine analyzes input data in real time, **tailoring its encryption path** to maintain high entropy, diffusion, and unpredictability — even **outperforming AES** on structured or semi-structured data where static ciphers fall short.
 
 | Goal                     | Achieved in Mango                          |
 |--------------------------|--------------------------------------------|
