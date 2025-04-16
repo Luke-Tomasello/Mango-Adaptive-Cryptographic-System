@@ -1,0 +1,136 @@
+﻿/*
+ * MangoBM Module
+ * =============================================
+ * Project: Mango
+ * Purpose: Demonstrates block-based encryption and decryption using Mango's 
+ *          adaptive transform engine. This example provides a low-friction 
+ *          template for encrypting large data streams using chunked processing.
+ * 
+ *          Features:
+ *            • Encrypts and decrypts 64KB of input as 64 separate blocks
+ *            • First block embeds the full Mango header (TRs, GR, IV, Hash)
+ *            • Remaining blocks are compact, headerless, and auto-synchronized
+ *            • Stateless per-block calls via EncryptBlock / DecryptBlock
+ * 
+ *          This demo forms the basis for implementing conventional block modes:
+ *            → ECB (demonstrated)
+ *            → CBC, CTR (extendable with external XOR or counter logic)
+ * 
+ *          Limitations:
+ *            • No padding — input must be block-aligned
+ *            • No internal chaining — chaining logic must be externalized
+ *            • Transform profile is fixed per session (from first block)
+ * 
+ * Author: [Luke Tomasello, luke@tomasello.com]
+ * Created: November 2024
+ * License: [MIT]
+ * =============================================
+ */
+
+using Mango.Adaptive;
+using Mango.Cipher;
+
+namespace MangoBM
+{
+    // ==========================================================
+    // 🧩 MangoBM – Block-Based Encryption & Decryption Demo
+    // ==========================================================
+    //
+    // 🔍 What This Module Demonstrates:
+    // ----------------------------------
+    // ✅ Encrypting large data split into discrete blocks
+    // ✅ First block embeds the Mango encryption header (TRs, GR, IV, Hash)
+    // ✅ Remaining blocks are headerless (compact)
+    // ✅ The header is auto-cached on first Encrypt/Decrypt
+    // ✅ Fully symmetric: chunked encryption + decryption roundtrip verified
+    //
+    // 🚀 What Developers Can Extend From Here:
+    // -----------------------------------------
+    // While this sample uses a basic block mode (no chaining, no IV feedback),
+    // it lays the groundwork for building conventional modes such as:
+    //
+    // • ECB (Electronic Codebook) – ✅ Already implemented.
+    //   - Each block is encrypted independently.
+    //   - No chaining, no dependencies between blocks.
+    //   - Already demonstrated in this module.
+    //
+    // • CBC (Cipher Block Chaining) – 🟡 Developer-extendable
+    //   - Requires XOR of each plaintext block with the **previous ciphertext block**.
+    //   - First block uses IV from Mango header (already included).
+    //   - Developers can insert XOR logic before/after Mango encryption.
+    //
+    // • CTR (Counter Mode) – 🟡 Developer-extendable
+    //   - Requires a nonce + counter for each block.
+    //   - Would involve custom transform logic outside of Mango core.
+    //   - Still feasible, but may require custom preprocessing.
+    //
+    // • CFB/OFB – 🔴 Not directly supported
+    //   - Require more complex feedback chaining across blocks.
+    //   - Would need custom feedback wiring and Mango transform sequencing.
+    //   - May be possible, but requires deep familiarity with Mango internals.
+    //
+    // ⚠️ Caveats:
+    // -----------------------------------------
+    // - MangoBM does not do padding. Your data should be block-aligned.
+    // - For deterministic outputs (CTR-like behavior), careful control of IV and transform state is required.
+    // - This demo assumes a static transform profile across all blocks (from first block).
+    //
+    // ✨ Summary:
+    // -----------------------------------------
+    // This is a low-friction, high-performance chunked encryption model.
+    // It shows **what's possible**, but encourages developers to build their
+    // own flavor of chaining, padding, or nonce-driven schemes on top of Mango.
+    //
+    // "We hand you the forge. What you craft is up to you." 🛠️
+
+    internal class MangoBM
+    {
+        static void Main(string[] args)
+        {
+            // 📦 Step 1: Create input blocks (64KB split into 64 blocks of 1024 bytes)
+            List<byte[]> inputBlocks = Enumerable.Range(0, 64)
+                .Select(i => Enumerable.Range(0, 1024).Select(b => (byte)((i + b) % 256)).ToArray())
+                .ToList();
+
+            var crypto = new CryptoLib("my password");
+
+            // 📊 Step 2: Analyze first block
+            InputProfile profile = InputProfiler.GetInputProfile(inputBlocks[0]);
+
+            // 🔐 Step 3: Encrypt first block (header included)
+            List<byte[]> outputBlocks = new();
+            byte[] encryptedFirst = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, inputBlocks[0]);
+            outputBlocks.Add(encryptedFirst);
+
+            // 🔐 Step 4: Encrypt remaining blocks (headerless)
+            for (int i = 1; i < inputBlocks.Count; i++)
+            {
+                byte[] encrypted = crypto.EncryptBlock(inputBlocks[i]);
+                outputBlocks.Add(encrypted);
+            }
+
+            // 🔓 Step 5: Decrypt first block (reads + caches config)
+            List<byte[]> decryptedBlocks = new();
+            byte[] decryptedFirst = crypto.Decrypt(outputBlocks[0]);
+            decryptedBlocks.Add(decryptedFirst);
+
+            // 🔓 Step 6: Decrypt remaining blocks
+            for (int i = 1; i < outputBlocks.Count; i++)
+            {
+                byte[] decrypted = crypto.DecryptBlock(outputBlocks[i]);
+                decryptedBlocks.Add(decrypted);
+            }
+
+            // ✅ Step 7: Validate result
+            byte[] original = Flatten(inputBlocks);
+            byte[] restored = Flatten(decryptedBlocks);
+
+            Console.WriteLine(original.SequenceEqual(restored)
+                ? "✅ Block-mode roundtrip successful!"
+                : "❌ Block-mode roundtrip failed.");
+        }
+
+        static byte[] Flatten(List<byte[]> blocks) =>
+            blocks.SelectMany(b => b).ToArray();
+    }
+}

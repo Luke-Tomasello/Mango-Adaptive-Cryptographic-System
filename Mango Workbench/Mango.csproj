@@ -1,0 +1,104 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <Optimize>False</Optimize>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Optimize>False</Optimize>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="backup10\**" />
+    <Compile Remove="backup11\**" />
+    <Compile Remove="backup12\**" />
+    <Compile Remove="backup13%28refactor for normalization%29\**" />
+    <Compile Remove="backup14\**" />
+    <Compile Remove="backup15%28refactor to add input-output analysis%29\**" />
+    <Compile Remove="backup16%28Positional Mapping - old%29\**" />
+    <Compile Remove="backup17%28Positional Mapping - new%29\**" />
+    <Compile Remove="backup1\**" />
+    <Compile Remove="backup2\**" />
+    <Compile Remove="Backup3\**" />
+    <Compile Remove="backup4\**" />
+    <Compile Remove="Backup5\**" />
+    <Compile Remove="backup6\**" />
+    <Compile Remove="backup7\**" />
+    <Compile Remove="backup8\**" />
+    <Compile Remove="backup9%28Console working well%29\**" />
+    <Compile Remove="Docs\**" />
+    <Compile Remove="junk1\**" />
+    <Compile Remove="NewFolder\**" />
+    <Compile Remove="Results\**" />
+    <EmbeddedResource Remove="backup10\**" />
+    <EmbeddedResource Remove="backup11\**" />
+    <EmbeddedResource Remove="backup12\**" />
+    <EmbeddedResource Remove="backup13%28refactor for normalization%29\**" />
+    <EmbeddedResource Remove="backup14\**" />
+    <EmbeddedResource Remove="backup15%28refactor to add input-output analysis%29\**" />
+    <EmbeddedResource Remove="backup16%28Positional Mapping - old%29\**" />
+    <EmbeddedResource Remove="backup17%28Positional Mapping - new%29\**" />
+    <EmbeddedResource Remove="backup1\**" />
+    <EmbeddedResource Remove="backup2\**" />
+    <EmbeddedResource Remove="Backup3\**" />
+    <EmbeddedResource Remove="backup4\**" />
+    <EmbeddedResource Remove="Backup5\**" />
+    <EmbeddedResource Remove="backup6\**" />
+    <EmbeddedResource Remove="backup7\**" />
+    <EmbeddedResource Remove="backup8\**" />
+    <EmbeddedResource Remove="backup9%28Console working well%29\**" />
+    <EmbeddedResource Remove="Docs\**" />
+    <EmbeddedResource Remove="junk1\**" />
+    <EmbeddedResource Remove="NewFolder\**" />
+    <EmbeddedResource Remove="Results\**" />
+    <None Remove="backup10\**" />
+    <None Remove="backup11\**" />
+    <None Remove="backup12\**" />
+    <None Remove="backup13%28refactor for normalization%29\**" />
+    <None Remove="backup14\**" />
+    <None Remove="backup15%28refactor to add input-output analysis%29\**" />
+    <None Remove="backup16%28Positional Mapping - old%29\**" />
+    <None Remove="backup17%28Positional Mapping - new%29\**" />
+    <None Remove="backup1\**" />
+    <None Remove="backup2\**" />
+    <None Remove="Backup3\**" />
+    <None Remove="backup4\**" />
+    <None Remove="Backup5\**" />
+    <None Remove="backup6\**" />
+    <None Remove="backup7\**" />
+    <None Remove="backup8\**" />
+    <None Remove="backup9%28Console working well%29\**" />
+    <None Remove="Docs\**" />
+    <None Remove="junk1\**" />
+    <None Remove="NewFolder\**" />
+    <None Remove="Results\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="_CryptoLib.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="Reset.cmd" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="JetBrains.Annotations" Version="2024.3.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.119" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CryptoLib\CryptoLib.csproj" />
+    <ProjectReference Include="..\InputProfiler\InputProfiler.csproj" />
+  </ItemGroup>
+
+</Project>

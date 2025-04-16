@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Mango": {
+      "commandName": "Project",
+      "commandLineArgs": "#-createMungeFailDB"
+    }
+  }
+}
