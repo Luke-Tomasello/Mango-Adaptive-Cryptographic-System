@@ -80,7 +80,8 @@ You can build pipelines of arbitrary complexity, execute them, and view detailed
 
 ```
 cd Workbench/bin
-Mango.exe```
+Mango.exe
+```
 
 From within the Workbench, you can:
 
@@ -100,7 +101,8 @@ If you're a developer or researcher interested in stepping through Mango's adapt
 
 ```
 cd MangoAC/bin
-MangoAC.exe```
+MangoAC.exe
+```
 
 This example profiles a sample input, selects the best transform sequence for it, and performs a full encryption → decryption → verification cycle.
 
@@ -108,7 +110,8 @@ This example profiles a sample input, selects the best transform sequence for it
 
 ```
 cd MangoBM/bin
-MangoBM.exe```
+MangoBM.exe
+```
 
 This example demonstrates block-based encryption using Mango. It encrypts and decrypts multiple blocks of structured data, using a cached transform header in the first block.
 Ideal for exploring how Mango might integrate into streaming or block-wise systems.
