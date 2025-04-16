@@ -80,7 +80,7 @@ You can build pipelines of arbitrary complexity, execute them, and view detailed
 
 ```
 cd Workbench/bin
-Mango.exe
+Mango.exe```
 
 From within the Workbench, you can:
 
