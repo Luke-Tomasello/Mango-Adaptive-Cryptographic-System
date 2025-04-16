@@ -1,0 +1,14 @@
+{
+  "CommandHistory": [
+    "list",
+    "help",
+    "run benchmark transforms",
+    "run munge",
+    "$ChunkedFbTx -> NibbleSwapShuffleInvTx -> NibbleSwapShuffleFwdTx -> MicroBlockSwapInvTx -> ButterflyWithPairsInvTx",
+    "run comparative analysis",
+    "batch optimize sequences",
+    "batch optimize sequences -l5",
+    "run regression tests"
+  ],
+  "Sequences": []
+}

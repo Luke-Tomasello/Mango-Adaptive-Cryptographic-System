@@ -1,0 +1,15 @@
+{
+  "Rounds": 5,
+  "MaxSequenceLen": 3,
+  "InputType": "Sequence",
+  "PassCount": 0,
+  "DesiredContenders": 1000,
+  "Quiet": true,
+  "FlushThreshold": 50000,
+  "SqlCompact": false,
+  "UseMetricScoring": false,
+  "Mode": "Cryptographic",
+  "ReportFormat": "SCR",
+  "ReportFilename": null,
+  "Reporting": "SCR,"
+}

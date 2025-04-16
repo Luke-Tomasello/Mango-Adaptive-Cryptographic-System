@@ -1,0 +1,601 @@
+===== ** Analysis Summary ** =====
+Mode: Cryptographic
+InputType: Random
+Metric Scoring: Disabled
+GR (Global Rounds): 3
+Max Sequence Length: 4
+==================================
+Contender #1
+Sequence: ShuffleNibblesFwdTx
+Aggregate Score: 81.4285714286
+Pass Count: 9 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9526378721, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: PASS
+  Metric: 0.5003356934, Threshold: 0.5023
+  Notes: Metric is within acceptable range.
+- SlidingWindow: PASS
+  Metric: 0.9067007016, Threshold: 0.9077
+  Notes: Metric is within acceptable range.
+- FrequencyDistribution: PASS
+  Metric: 0.7455234770, Threshold: 0.7526
+  Notes: Metric is within acceptable range.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: 0.0087184249, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0348859515, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 50.3631591797, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 49.7497558594, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #2
+Sequence: ShuffleBitsFwdTx
+Aggregate Score: 81.4285714286
+Pass Count: 9 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9533998872, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: PASS
+  Metric: 0.5003356934, Threshold: 0.5023
+  Notes: Metric is within acceptable range.
+- SlidingWindow: PASS
+  Metric: 0.9040489387, Threshold: 0.9077
+  Notes: Metric is within acceptable range.
+- FrequencyDistribution: PASS
+  Metric: 0.7477518080, Threshold: 0.7526
+  Notes: Metric is within acceptable range.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: -0.0257876595, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0338396345, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 49.6368408203, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 49.7924804688, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #3
+Sequence: ShuffleBitsInvTx
+Aggregate Score: 79.0476190476
+Pass Count: 8 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9529067558, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: PASS
+  Metric: 0.5003356934, Threshold: 0.5023
+  Notes: Metric is within acceptable range.
+- SlidingWindow: FAIL
+  Metric: 0.9272308622, Threshold: 0.9077
+  Notes: Deviation: 0.0245, Acceptable Range: ±0.0050.
+- FrequencyDistribution: PASS
+  Metric: 0.7457634360, Threshold: 0.7526
+  Notes: Metric is within acceptable range.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: 0.0063554847, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0329764230, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 49.8748779297, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 50.2136230469, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #4
+Sequence: ShuffleBytesInvTx
+Aggregate Score: 78.5714285714
+Pass Count: 8 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9523456182, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: PASS
+  Metric: 0.5003356934, Threshold: 0.5023
+  Notes: Metric is within acceptable range.
+- SlidingWindow: FAIL
+  Metric: 0.9224668724, Threshold: 0.9077
+  Notes: Deviation: 0.0198, Acceptable Range: ±0.0050.
+- FrequencyDistribution: PASS
+  Metric: 0.7426021327, Threshold: 0.7526
+  Notes: Metric is within acceptable range.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: 0.0183859429, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0364903041, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 50.0091552734, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 49.9633789062, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #5
+Sequence: ShuffleBytesFwdTx
+Aggregate Score: 78.5714285714
+Pass Count: 8 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9523456182, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: PASS
+  Metric: 0.5003356934, Threshold: 0.5023
+  Notes: Metric is within acceptable range.
+- SlidingWindow: FAIL
+  Metric: 0.9078816126, Threshold: 0.9077
+  Notes: Deviation: 0.0052, Acceptable Range: ±0.0050.
+- FrequencyDistribution: PASS
+  Metric: 0.7426021327, Threshold: 0.7526
+  Notes: Metric is within acceptable range.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: 0.0183859429, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0364903041, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 49.7711181641, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 50.0366210938, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #6
+Sequence: SubBytesXorMaskInvTx
+Aggregate Score: 76.6666666667
+Pass Count: 7 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9606337898, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: PASS
+  Metric: 0.5014343262, Threshold: 0.5023
+  Notes: Metric is within acceptable range.
+- SlidingWindow: FAIL
+  Metric: 0.9098471324, Threshold: 0.9077
+  Notes: Deviation: 0.0071, Acceptable Range: ±0.0050.
+- FrequencyDistribution: FAIL
+  Metric: 0.7683755144, Threshold: 0.7526
+  Notes: Deviation: 0.0258, Acceptable Range: ±0.0100.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: -0.0368042197, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0376412528, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 49.9145507812, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 50.0610351562, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #7
+Sequence: XORTx
+Aggregate Score: 76.6666666667
+Pass Count: 7 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9575568143, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: PASS
+  Metric: 0.4997253418, Threshold: 0.5023
+  Notes: Metric is within acceptable range.
+- SlidingWindow: FAIL
+  Metric: 0.9115593064, Threshold: 0.9077
+  Notes: Deviation: 0.0089, Acceptable Range: ±0.0050.
+- FrequencyDistribution: FAIL
+  Metric: 0.7600277726, Threshold: 0.7526
+  Notes: Deviation: 0.0174, Acceptable Range: ±0.0100.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: 0.0451298593, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0315290179, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 49.8168945312, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 50.0457763672, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #8
+Sequence: MaskedDoubleSubFwdTx
+Aggregate Score: 76.6666666667
+Pass Count: 7 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9595762462, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: PASS
+  Metric: 0.4990539551, Threshold: 0.5023
+  Notes: Metric is within acceptable range.
+- SlidingWindow: FAIL
+  Metric: 0.9197221135, Threshold: 0.9077
+  Notes: Deviation: 0.0170, Acceptable Range: ±0.0050.
+- FrequencyDistribution: FAIL
+  Metric: 0.7646504636, Threshold: 0.7526
+  Notes: Deviation: 0.0221, Acceptable Range: ±0.0100.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: 0.0014890536, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0385393415, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 50.1342773438, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 49.5605468750, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #9
+Sequence: ShuffleNibblesInvTx
+Aggregate Score: 76.6666666667
+Pass Count: 7 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9580536652, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: PASS
+  Metric: 0.5003356934, Threshold: 0.5023
+  Notes: Metric is within acceptable range.
+- SlidingWindow: FAIL
+  Metric: 0.9117645129, Threshold: 0.9077
+  Notes: Deviation: 0.0091, Acceptable Range: ±0.0050.
+- FrequencyDistribution: FAIL
+  Metric: 0.7602186054, Threshold: 0.7526
+  Notes: Deviation: 0.0176, Acceptable Range: ±0.0100.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: -0.0028156685, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0362897600, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 49.9603271484, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 49.9084472656, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #10
+Sequence: FrequencyEqualizerFwdTx
+Aggregate Score: 76.6666666667
+Pass Count: 7 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9618281746, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: PASS
+  Metric: 0.5012512207, Threshold: 0.5023
+  Notes: Metric is within acceptable range.
+- SlidingWindow: FAIL
+  Metric: 0.9099397807, Threshold: 0.9077
+  Notes: Deviation: 0.0072, Acceptable Range: ±0.0050.
+- FrequencyDistribution: FAIL
+  Metric: 0.7700947036, Threshold: 0.7526
+  Notes: Deviation: 0.0275, Acceptable Range: ±0.0100.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: 0.0178543464, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0359235491, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 49.0051269531, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 49.1638183594, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #11
+Sequence: MaskedCascadeSubInvFbTx
+Aggregate Score: 76.6666666667
+Pass Count: 7 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9573812516, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: PASS
+  Metric: 0.5007324219, Threshold: 0.5023
+  Notes: Metric is within acceptable range.
+- SlidingWindow: FAIL
+  Metric: 0.9116105634, Threshold: 0.9077
+  Notes: Deviation: 0.0089, Acceptable Range: ±0.0050.
+- FrequencyDistribution: FAIL
+  Metric: 0.7580646474, Threshold: 0.7526
+  Notes: Deviation: 0.0155, Acceptable Range: ±0.0100.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: 0.0050687053, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0381208147, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 49.8565673828, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 49.6459960938, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #12
+Sequence: FrequencyEqualizerInvTx
+Aggregate Score: 71.9047619048
+Pass Count: 6 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9615563228, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: FAIL
+  Metric: 0.4970703125, Threshold: 0.5023
+  Notes: Deviation: 0.0032, Acceptable Range: ±0.0020.
+- SlidingWindow: FAIL
+  Metric: 0.9183171524, Threshold: 0.9077
+  Notes: Deviation: 0.0156, Acceptable Range: ±0.0050.
+- FrequencyDistribution: FAIL
+  Metric: 0.7716931376, Threshold: 0.7526
+  Notes: Deviation: 0.0291, Acceptable Range: ±0.0100.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: 0.0223579175, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0369175502, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 48.9410400391, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 48.4802246094, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #13
+Sequence: MaskedCascadeSubFwdFbTx
+Aggregate Score: 71.9047619048
+Pass Count: 6 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9578480263, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: FAIL
+  Metric: 0.5045776367, Threshold: 0.5023
+  Notes: Deviation: 0.0043, Acceptable Range: ±0.0020.
+- SlidingWindow: FAIL
+  Metric: 0.9142680760, Threshold: 0.9077
+  Notes: Deviation: 0.0116, Acceptable Range: ±0.0050.
+- FrequencyDistribution: FAIL
+  Metric: 0.7593927563, Threshold: 0.7526
+  Notes: Deviation: 0.0168, Acceptable Range: ±0.0100.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: -0.0043716463, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0387922015, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 50.1831054688, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 49.9023437500, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #14
+Sequence: MaskedDoubleSubInvTx
+Aggregate Score: 69.0476190476
+Pass Count: 7 / 9
+Scores:
+- Entropy: FAIL
+  Metric: 7.9521596438, Threshold: 7.9523
+  Notes: Deviation: 0.0001, Acceptable Range: ±0.0000.
+- BitVariance: FAIL
+  Metric: 0.4958801270, Threshold: 0.5023
+  Notes: Deviation: 0.0044, Acceptable Range: ±0.0020.
+- SlidingWindow: PASS
+  Metric: 0.9061907932, Threshold: 0.9077
+  Notes: Metric is within acceptable range.
+- FrequencyDistribution: PASS
+  Metric: 0.7431362153, Threshold: 0.7526
+  Notes: Metric is within acceptable range.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: -0.0242026458, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0368477958, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 49.7772216797, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 49.1271972656, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #15
+Sequence: ChunkedFbTx
+Aggregate Score: 69.0476190476
+Pass Count: 7 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9527364507, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: PASS
+  Metric: 0.4992370605, Threshold: 0.5023
+  Notes: Metric is within acceptable range.
+- SlidingWindow: FAIL
+  Metric: 0.9227380671, Threshold: 0.9077
+  Notes: Deviation: 0.0200, Acceptable Range: ±0.0050.
+- FrequencyDistribution: PASS
+  Metric: 0.7475703997, Threshold: 0.7526
+  Notes: Metric is within acceptable range.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: FAIL
+  Metric: 0.4424892800, Threshold: 0.0500
+  Notes: Deviation: 0.4425, Acceptable Range: ±0.0500.
+- PositionalMapping: PASS
+  Metric: 0.0300292969, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 53.1280517578, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 45.3125000000, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #16
+Sequence: SubBytesXorMaskFwdTx
+Aggregate Score: 66.6666666667
+Pass Count: 6 / 9
+Scores:
+- Entropy: FAIL
+  Metric: 7.9497572903, Threshold: 7.9523
+  Notes: Deviation: 0.0025, Acceptable Range: ±0.0000.
+- BitVariance: FAIL
+  Metric: 0.5027465820, Threshold: 0.5023
+  Notes: Deviation: 0.0024, Acceptable Range: ±0.0020.
+- SlidingWindow: FAIL
+  Metric: 0.9147955280, Threshold: 0.9077
+  Notes: Deviation: 0.0121, Acceptable Range: ±0.0050.
+- FrequencyDistribution: PASS
+  Metric: 0.7353533643, Threshold: 0.7526
+  Notes: Metric is within acceptable range.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: PASS
+  Metric: 0.0121235088, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- PositionalMapping: PASS
+  Metric: 0.0392979213, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 49.3774414062, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 49.8565673828, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #17
+Sequence: MaskBasedSBoxInvTx
+Aggregate Score: 66.6666666667
+Pass Count: 7 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9541146789, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: FAIL
+  Metric: 0.4949340820, Threshold: 0.5023
+  Notes: Deviation: 0.0054, Acceptable Range: ±0.0020.
+- SlidingWindow: PASS
+  Metric: 0.9023512039, Threshold: 0.9077
+  Notes: Metric is within acceptable range.
+- FrequencyDistribution: PASS
+  Metric: 0.7486001108, Threshold: 0.7526
+  Notes: Metric is within acceptable range.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: FAIL
+  Metric: -0.0502265740, Threshold: 0.0500
+  Notes: Deviation: 0.0502, Acceptable Range: ±0.0500.
+- PositionalMapping: PASS
+  Metric: 0.0398733956, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 49.6398925781, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 50.0885009766, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+
+Contender #18
+Sequence: MaskBasedSBoxFwdTx
+Aggregate Score: 66.6666666667
+Pass Count: 7 / 9
+Scores:
+- Entropy: PASS
+  Metric: 7.9541146789, Threshold: 7.9523
+  Notes: Metric is within acceptable range.
+- BitVariance: FAIL
+  Metric: 0.4949340820, Threshold: 0.5023
+  Notes: Deviation: 0.0054, Acceptable Range: ±0.0020.
+- SlidingWindow: PASS
+  Metric: 0.9023512039, Threshold: 0.9077
+  Notes: Metric is within acceptable range.
+- FrequencyDistribution: PASS
+  Metric: 0.7486001108, Threshold: 0.7526
+  Notes: Metric is within acceptable range.
+- PeriodicityCheck: PASS
+  Metric: 1.0000000000, Threshold: 1.0000
+  Notes: Metric is within acceptable range.
+- MangosCorrelation: FAIL
+  Metric: -0.0502265740, Threshold: 0.0500
+  Notes: Deviation: 0.0502, Acceptable Range: ±0.0500.
+- PositionalMapping: PASS
+  Metric: 0.0398733956, Threshold: 0.0500
+  Notes: Metric is within acceptable range.
+- AvalancheScore: PASS
+  Metric: 49.5544433594, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+- KeyDependency: PASS
+  Metric: 49.8016357422, Threshold: 55.0000
+  Notes: Metric is within acceptable range.
+

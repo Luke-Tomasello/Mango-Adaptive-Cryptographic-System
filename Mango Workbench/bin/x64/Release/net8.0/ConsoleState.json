@@ -1,0 +1,9 @@
+{
+  "CommandHistory": [
+    "batch optimize sequences -L5",
+    "$MaskBasedSBoxFwdTx -> MaskBasedSBoxInvTx -> BitFlipButterflyFwdTx -> ChunkedFbTx",
+    "run sequence",
+    "run munge"
+  ],
+  "Sequences": []
+}
