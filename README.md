@@ -78,7 +78,7 @@ Mango supports two primary usage modes:
 The Mango Workbench (`Mango.exe`) allows you to interactively assemble, test, and analyze cryptographic sequences composed of ~40 atomic transforms.  
 You can build pipelines of arbitrary complexity, execute them, and view detailed metrics for strength, reversibility, and speed.
 
-```bash
+```
 cd Workbench/bin
 Mango.exe
 
@@ -98,17 +98,17 @@ If you're a developer or researcher interested in stepping through Mango's adapt
 
 **Adaptive Cryptography (Single Block Mode)**
 
-```bash
+```
 cd MangoAC/bin
-MangoAC.exe
+MangoAC.exe```
 
 This example profiles a sample input, selects the best transform sequence for it, and performs a full encryption → decryption → verification cycle.
 
 **Adaptive Cryptography in Block Mode**
 
-```bash
+```
 cd MangoBM/bin
-MangoBM.exe
+MangoBM.exe```
 
 This example demonstrates block-based encryption using Mango. It encrypts and decrypts multiple blocks of structured data, using a cached transform header in the first block.
 Ideal for exploring how Mango might integrate into streaming or block-wise systems.
