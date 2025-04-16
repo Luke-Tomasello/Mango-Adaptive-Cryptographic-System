@@ -116,4 +116,4 @@ MangoBM.exe
 This example demonstrates block-based encryption using Mango. It encrypts and decrypts multiple blocks of structured data, using a cached transform header in the first block.
 Ideal for exploring how Mango might integrate into streaming or block-wise systems.
 
-📘 Full documentation is available in: Workbench/Docs/
+📘 Full documentation is available in: `Workbench/Docs/`
