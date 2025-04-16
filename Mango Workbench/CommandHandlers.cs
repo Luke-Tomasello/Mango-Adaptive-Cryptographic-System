@@ -1,26 +1,26 @@
 ﻿/*
-   * CommandHandlers Module
-   * =============================================
-   * Project: Mango
-   * Purpose: Central dispatch for Mango's interactive and batch commands. 
-   *          Contains handlers for transform profiling, regression tests, 
-   *          configuration access, visualization, and interactive analysis.
-   * 
-   *          This module supports:
-   *            • Command-line handlers for CLI and REPL use
-   *            • Settings retrieval and configuration updates
-   *            • AES vs Mango comparative analysis
-   *            • Regression testing and benchmark execution
-   *            • Weight tuning, profiling, and smart reporting utilities
-   * 
-   *          Interfaces directly with MangoConsole and Workbench layers 
-   *          to interpret user commands and trigger core functionality.
-   * 
-   * Author: [Luke Tomasello, luke@tomasello.com]
-   * Created: November 2024
-   * License: [MIT]
-   * =============================================
-   */
+    * CommandHandlers Module
+    * =============================================
+    * Project: Mango
+    * Purpose: Central dispatch for Mango's interactive and batch commands. 
+    *          Contains handlers for transform profiling, regression tests, 
+    *          configuration access, visualization, and interactive analysis.
+    * 
+    *          This module supports:
+    *            • Command-line handlers for CLI and REPL use
+    *            • Settings retrieval and configuration updates
+    *            • AES vs Mango comparative analysis
+    *            • Regression testing and benchmark execution
+    *            • Weight tuning, profiling, and smart reporting utilities
+    * 
+    *          Interfaces directly with MangoConsole and Workbench layers 
+    *          to interpret user commands and trigger core functionality.
+    * 
+    * Author: [Luke Tomasello, luke@tomasello.com]
+    * Created: November 2024
+    * License: [MIT]
+    * =============================================
+    */
 
 using Mango.Adaptive;
 using Mango.Analysis;
