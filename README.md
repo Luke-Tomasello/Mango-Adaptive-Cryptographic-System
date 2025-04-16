@@ -45,7 +45,7 @@ Its adaptive engine analyzes input data in real time, **tailoring its encryption
 
 | Category              | **Mango (CLR)**                                                      | **AES (Native)**                                                  |
 |-----------------------|----------------------------------------------------------------------|-------------------------------------------------------------------|
-| **Sequence**          | SubBytesFwd → SubBytesInv → ButterflyWithPairs → ChunkedFb         | Fixed AES rounds                                                  |
+| **Sequence**          | SubBytesFwdTx → SubBytesInvTx → ButterflyWithPairsFwdTx → ChunkedFbTx | Fixed AES rounds                                                  |
 | **Global Rounds (GR)**| 6                                                                    | N/A                                                               |
 | **Aggregate Score**   | **89.52**                                                            | 71.43                                                             |
 | **Pass Count**        | **9 / 9**                                                            | 7 / 9                                                             |
