@@ -39,60 +39,64 @@ namespace Mango.Adaptive
         {
             // 🔐 Best Profile: Combined
             // -------------------------
-            // ✅ Cryptographic Mode: GR:6, TRs: all 1s
-            // ✅ Derived from Munge(A)(6) L4 winner
-            // ✅ Aggregate Score: 89.52 | Pass Count: 9/9
+            // ✅ Cryptographic Mode: GR:6, TRs: specified per transform
+            // ✅ Derived from Munge(A)(6) L5 winner
+            // ✅ Aggregate Score: 90.00 | Pass Count: 9/9
             // ✅ AES-class performance across all metrics
             //
             // Sequence:
-            //   SubBytesFwdTx(ID:11)(TR:1)
-            // → SubBytesInvTx(ID:12)(TR:1)
-            // → ButterflyWithPairsFwdTx(ID:29)(TR:1)
-            // → ChunkedFbTx(ID:40)(TR:1)
+            //   ButterflyTx(ID:8)(TR:3)
+            // → SubBytesXorMaskInvTx(ID:10)(TR:1)
+            // → ButterflyWithRotationFwdTx(ID:31)(TR:1)
+            // → SubBytesXorMaskFwdTx(ID:9)(TR:1)
+            // → ButterflyWithRotationFwdTx(ID:31)(TR:1)
             // → | (GR:6)
             //
             // 🔥 This is the baked-in god-sequence for Combined data.
-            //    When in doubt, this profile delivers rock-solid security.
+            //    Selected for superior cryptographic metric shape under weighted analysis.
             { "Combined", new InputProfile("Combined", new (byte, byte)[]
                 {
-                    (11, 1), // SubBytesFwdTx
-                    (12, 1), // SubBytesInvTx
-                    (29, 1), // ButterflyWithPairsFwdTx
-                    (40, 1)  // ChunkedFbTx
+                    (8, 3),   // ButterflyTx
+                    (10, 1),  // SubBytesXorMaskInvTx
+                    (31, 1),  // ButterflyWithRotationFwdTx
+                    (9, 1),   // SubBytesXorMaskFwdTx
+                    (31, 1)   // ButterflyWithRotationFwdTx (again)
                 }, 6)
             },
 
-            // ⏳ Other profiles still pending L5 verification — to be updated
-            // 🔄 These are older Munge(A)(9) results and may soon be replaced
-
             // 🧠 Best Profile: Natural
             // -------------------------
-            // ✅ Cryptographic Mode: GR:1, TRs: all 1s
+            // ✅ Cryptographic Mode: GR:3, TRs: all 1s
             // ✅ Derived from Munge(A)(9) L5 winner
-            // ✅ Aggregate Score: 87.14 | Pass Count: 9/9
+            // ✅ Aggregate Score: 91.43 | Pass Count: 9/9
+            // ✅ AES-class performance across all metrics
             //
             // Sequence:
             //   ButterflyWithRotationFwdTx(ID:31)(TR:1)
-            // → ButterflyWithPairsFwdTx(ID:29)(TR:1)
-            // → ButterflyWithPairsFwdTx(ID:29)(TR:1)
+            // → ButterflyWithPairsInvTx(ID:30)(TR:1)
             // → ChunkedFbTx(ID:40)(TR:1)
+            // → BitFlipButterflyInvTx(ID:34)(TR:1)
+            // → ButterflyWithPairsFwdTx(ID:29)(TR:1)
             // → | (GR:3)
             //
-            // 🔥 High performance on structure-rich Natural data.
-            //    Emphasizes paired and rotating bit dispersion.
+            // 🔥 Tuned for structure-rich Natural data.
+            //    Balances bit symmetry, rotation, and inverse feedback.
             { "Natural", new InputProfile("Natural", new (byte, byte)[]
                 {
                     (31, 1), // ButterflyWithRotationFwdTx
-                    (29, 1), // ButterflyWithPairsFwdTx
-                    (29, 1), // ButterflyWithPairsFwdTx (again)
-                    (40, 1)  // ChunkedFbTx
+                    (30, 1), // ButterflyWithPairsInvTx
+                    (40, 1), // ChunkedFbTx
+                    (34, 1), // BitFlipButterflyInvTx
+                    (29, 1)  // ButterflyWithPairsFwdTx
                 }, 3)
             },
+
             // 🧠 Best Profile: Sequence
             // --------------------------
-            // ✅ Cryptographic Mode: GR:1, TRs: all 1s
-            // ✅ Derived from Munge(A)(9) L5 winner
-            // ✅ Aggregate Score: 95.71 | Pass Count: 9/9
+            // ✅ Cryptographic Mode: GR:5, TRs: all 1s
+            // ✅ Derived from Munge(A)(9) L4 winner
+            // ✅ Aggregate Score: 87.14 | Pass Count: 9/9
+            // ✅ AES-class performance across all metrics
             //
             // Sequence:
             //   ShuffleNibblesInvTx(ID:19)(TR:1)
@@ -111,6 +115,7 @@ namespace Mango.Adaptive
                     (30, 1)  // ButterflyWithPairsInvTx
                 }, 5)
             },
+
 
             // 🎲 Best Profile: Random
             // ------------------------

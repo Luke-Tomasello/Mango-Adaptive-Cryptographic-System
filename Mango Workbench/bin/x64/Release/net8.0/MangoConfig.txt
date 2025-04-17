@@ -1,16 +1,16 @@
 ===============
      Munge     
 ===============
-[Timestamp] 04/10/2025 11:55:30 AM
-DataType: Combined
-Rounds: 6
+[Timestamp] 04/15/2025 09:15:01 PM
+DataType: Natural
+Rounds: 3
 Mode: Cryptographic
 PassCount: 6
-MaxSequenceLen: 4
-Munge Level: L4
+MaxSequenceLen: 5
+Munge Level: L5
 Metric Scoring: False
-Database: MungeFailDB,-P6-DC-MC-SF.db
+Database: MungeFailDB,-P6-DN-MC-SF.db
 Database Creation Mode: Read-Only
-Commandline: -RunCommand run munge(-restore) -ExitJobComplete -maxSequenceLen 4 -inputType Combined -passCount 6 -quiet -mode Cryptographic
-MungeFailDB,-P6-DC-MC-SF.db Active
+Commandline: -RunCommand run munge(-restore) -ExitJobComplete -maxSequenceLen 5 -inputType Natural -passCount 6 -quiet -mode Cryptographic
+MungeFailDB,-P6-DN-MC-SF.db Active
 ===============

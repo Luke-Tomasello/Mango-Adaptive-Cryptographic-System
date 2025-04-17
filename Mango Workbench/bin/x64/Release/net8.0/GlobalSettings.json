@@ -1,8 +1,8 @@
 {
-  "Rounds": 6,
-  "MaxSequenceLen": 3,
-  "InputType": "Combined",
-  "PassCount": 0,
+  "Rounds": 3,
+  "MaxSequenceLen": 5,
+  "InputType": "Natural",
+  "PassCount": 6,
   "DesiredContenders": 1000,
   "Quiet": true,
   "FlushThreshold": 50000,
