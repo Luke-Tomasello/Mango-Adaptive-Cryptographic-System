@@ -227,8 +227,22 @@ namespace Mango.Cipher
         { 39, new TransformInfo {Name = "NibbleInterleaverTx", Id = 39, InverseId = 39, Implementation = NibbleInterleaverTx, BenchmarkTimeMs = 0.0} },
         { 40, new TransformInfo { Name = "ChunkedFbTx", Id = 40, InverseId = 40, Implementation = ChunkedFbTx, BenchmarkTimeMs = 0.0 } }
 };
+            ValidateTransformRegistry();
             AssignCoinPreferences();
             AssignBenchmarkValues();
+        }
+        // Ensures all transform IDs are sequential and gap-free, starting from ID 1.
+        public void ValidateTransformRegistry()
+        {
+            int expectedId = 1;
+
+            foreach (var transform in TransformRegistry)
+            {
+                if (transform.Key != expectedId)
+                    throw new InvalidOperationException($"Transform ID sequence is broken. Expected ID {expectedId}, but found {transform.Key}.");
+
+                expectedId++;
+            }
         }
         private static Dictionary<int, double> benchmarkCache;
         private static readonly object cacheLock = new object();
@@ -1227,6 +1241,11 @@ namespace Mango.Cipher
             // Extract the transform config from the stored header
             var (hash, iv, rounds, trConfig, _) = ExtractHeaderAndCiphertext(LastHeader, HashLength, IVLength);
 
+            // Ensure all transforms in the sequence are supported by the current library version.
+            // If any transform ID exceeds the supported set, this indicates a version mismatch.
+            if (CheckVersion(trConfig, out byte required) == false)
+                throw new InvalidOperationException($"Encrypted packet requires CryptoLib version {required} or higher. Decryption aborted.");
+
             // Set GR and TRs from header
             Options.Rounds = rounds;
             ApplyTransformRounds(trConfig);
@@ -1275,6 +1294,11 @@ namespace Mango.Cipher
             // Extract header and transform config
             var (_, _, rounds, trConfig, ciphertext) = ExtractHeaderAndCiphertext(encrypted, HashLength, IVLength);
 
+            // Ensure all transforms in the sequence are supported by the current library version.
+            // If any transform ID exceeds the supported set, this indicates a version mismatch.
+            if (CheckVersion(trConfig, out byte required) == false)
+                throw new InvalidOperationException($"Encrypted packet requires CryptoLib version {required} or higher. Decryption aborted.");
+
             // Generate reverse sequence
             trConfig = GenerateReverseSequence(trConfig);
 
@@ -1296,6 +1320,11 @@ namespace Mango.Cipher
 
             // Extract config from stored header (no payload in LastHeader)
             var (hash, iv, rounds, trConfig, _) = ExtractHeaderAndCiphertext(LastHeader, HashLength, IVLength);
+
+            // Ensure all transforms in the sequence are supported by the current library version.
+            // If any transform ID exceeds the supported set, this indicates a version mismatch.
+            if (CheckVersion(trConfig, out byte required) == false)
+                throw new InvalidOperationException($"Encrypted packet requires CryptoLib version {required} or higher. Decryption aborted.");
 
             // Invert the transform config (both ID and order)
             var inverseConfig = GenerateReverseSequence(trConfig);
@@ -1351,11 +1380,14 @@ namespace Mango.Cipher
                 data = ApplyTransformations(sequence, data, Coins, reverse: false);
             }
 
+            // ✅ Encode transform-based version for header compatibility check.
+            var version = GetLibVersion();
+
             // ✅ Infer (ID, TR) pairs based on the transform registry
             var trConfig = InferTransformRounds(sequence);
 
             // ✅ Create a minimal header (no ciphertext) and store it
-            var header = PackHeaderAndCiphertext(hash, options.DefaultIV, (byte)options.Rounds, trConfig, Array.Empty<byte>());
+            var header = PackHeaderAndCiphertext(version.major, version.minor,hash, options.DefaultIV, (byte)options.Rounds, trConfig, Array.Empty<byte>());
             LastHeader = header;
 
             // ✅ Allocate and merge the final encrypted output
@@ -1371,10 +1403,15 @@ namespace Mango.Cipher
             const int IVLength = 12;
 
             // Extract the hash, IV, rounds, transform config (ID:TR pairs), and ciphertext.
-            // Note: trConfig is extracted but not used here.
-            // In Workbench and high-level API flows (e.g., MangoAC), the transform rounds
-            // are already applied to the registry **before** this core decrypt is called.
+            // Note: trConfig is now used for version compatibility checking, but the TR values
+            // are not applied here. In Workbench and high-level API flows (e.g., MangoAC),
+            // transform rounds are already applied to the registry **before** this core decrypt is called.
             var (hash, IV, rounds, trConfig, ciphertext) = ExtractHeaderAndCiphertext(input, HashLength, IVLength);
+
+            // Ensure all transforms in the sequence are supported by the current library version.
+            // If any transform ID exceeds the supported set, this indicates a version mismatch.
+            if (CheckVersion(trConfig, out byte required) == false)
+                throw new InvalidOperationException($"Encrypted packet requires CryptoLib version {required} or higher. Decryption aborted.");
 
             // ✅ Store only the header portion, trimming off the ciphertext.
             LastHeader = input.Take(input.Length - ciphertext.Length).ToArray();
@@ -1433,6 +1470,62 @@ namespace Mango.Cipher
                     throw new InvalidOperationException($"Transform ID {id} not found in registry.");
             }
         }
+        
+        #region Versioning
+        // ======================================================================================
+        // Versioning Model for Mango Transform Compatibility
+        // ======================================================================================
+        // - Each transform has a unique Transform ID (starting from 1).
+        // - TransformRegistry defines the full list of available transforms, in order.
+        // - Transform ID 1 corresponds to ordinal 0, Transform ID 2 → ordinal 1, etc.
+        // - Version 1 of the CryptoLib supports 40 transforms (IDs 1 through 40).
+        // - Each additional transform (ID > 40) increases the required version:
+        //     ID 41 → Version 2
+        //     ID 42 → Version 3
+        //     ...
+        // - All encrypted packets include their required transform sequence.
+        // - During decryption, the library confirms that all transforms used are supported.
+        //   If not, decryption fails with a version incompatibility notice.
+        // ======================================================================================
+
+        private const byte CoreVersion = 40;
+
+        /// <summary>
+        /// Returns the current library version based on the number of registered transforms.
+        /// Version 1 == 40 transforms. Each additional transform increments the version.
+        /// </summary>
+        public (byte major, byte minor) GetLibVersion()
+        {
+            int count = TransformRegistry.Count;
+
+            // Version 1 supports 40 transforms (IDs 1–40). Each additional transform increases the version.
+            byte major = (byte)Math.Max(1, count - CoreVersion + 1);
+            byte minor = 0; // Reserved for future use, optional override elsewhere
+
+            return (major, minor);
+        }
+
+        /// <summary>
+        /// Checks if all transforms in the sequence are supported by the current library version.
+        /// Outputs the required version if any transform exceeds the supported set.
+        /// </summary>
+        public bool CheckVersion((byte ID, byte TR)[] sequence, out byte requiredVersion)
+        {
+            int maxTransformID = sequence.Max(t => t.ID);
+            int currentMaxID = TransformRegistry.Count; // Last valid ID equals transform count
+
+            if (maxTransformID <= currentMaxID)
+            {
+                requiredVersion = 0;
+                return true;
+            }
+
+            // Example: ID 41 → Version 2, ID 42 → Version 3, etc.
+            requiredVersion = (byte)(maxTransformID - CoreVersion + 1);
+            return false;
+        }
+        #endregion Versioning
+
         private (byte ID, byte TR)[] GenerateReverseSequence((byte ID, byte TR)[] forward)
         {
             return forward
@@ -1476,22 +1569,36 @@ namespace Mango.Cipher
             byte adjustedRound = reverse ? (byte)(totalRounds - round - 1) : round;
             return (byte)((coinBase + adjustedRound) & 0xFF);
         }
-        private byte[] PackHeaderAndCiphertext(byte[] hash, byte[] iv, byte rounds, (byte ID, byte TR)[] trConfig, byte[] ciphertext)
+        /// <summary>
+        /// Packages the encrypted output with a structured header.
+        /// Header layout:
+        /// [VERSION_MAJOR][VERSION_MINOR][HASH][IV][ROUNDS][SEQLEN][ID:TR pairs...][CIPHERTEXT]
+        /// </summary>
+        private byte[] PackHeaderAndCiphertext(
+            byte versionMajor,
+            byte versionMinor,
+            byte[] hash,
+            byte[] iv,
+            byte rounds,
+            (byte ID, byte TR)[] trConfig,
+            byte[] ciphertext)
         {
             if (hash == null || iv == null || ciphertext == null || trConfig == null)
                 throw new ArgumentNullException("One or more input parameters are null.");
 
-            // New header layout:
-            // [HASH][IV][ROUNDS][SEQLEN][ID:TR pairs...][CIPHERTEXT]
-
             int sequenceLen = trConfig.Length;
             int trConfigBytes = sequenceLen * 2; // Each ID:TR pair = 2 bytes
 
+            // Total header size:
+            // 2 (version) + hash + iv + 1 (rounds) + 1 (sequenceLen) + 2 * sequenceLen + ciphertext
             byte[] output = new byte[
-                hash.Length + iv.Length + 1 + 1 + trConfigBytes + ciphertext.Length
+                2 + hash.Length + iv.Length + 1 + 1 + trConfigBytes + ciphertext.Length
             ];
 
             int offset = 0;
+
+            output[offset++] = versionMajor;
+            output[offset++] = versionMinor;
 
             Buffer.BlockCopy(hash, 0, output, offset, hash.Length);
             offset += hash.Length;
@@ -1512,14 +1619,25 @@ namespace Mango.Cipher
 
             return output;
         }
-        private (byte[] hash, byte[] nonce, byte rounds, (byte ID, byte TR)[] sequence, byte[] ciphertext) ExtractHeaderAndCiphertext(byte[] input, int hashLength, int nonceLength)
+
+        /// <summary>
+        /// Parses the structured header and extracts the hash, nonce, rounds, sequence, and ciphertext.
+        /// Expects header layout:
+        /// [VERSION_MAJOR][VERSION_MINOR][HASH][IV][ROUNDS][SEQLEN][ID:TR pairs...][CIPHERTEXT]
+        /// </summary>
+        private (byte[] hash, byte[] nonce, byte rounds, (byte ID, byte TR)[] sequence, byte[] ciphertext)
+            ExtractHeaderAndCiphertext(byte[] input, int hashLength, int nonceLength)
         {
-            if (input.Length < hashLength + nonceLength + 2) // +2 for rounds + sequence length
+            if (input.Length < 2 + hashLength + nonceLength + 2) // +2 for version, +2 for rounds + seqLen
                 throw new ArgumentException("Input data is too short to contain a valid header.");
 
             int offset = 0;
 
-            byte[] hash = input.Take(hashLength).ToArray();
+            // Skip versionMajor and versionMinor
+            byte versionMajor = input[offset++];
+            byte versionMinor = input[offset++];
+
+            byte[] hash = input.Skip(offset).Take(hashLength).ToArray();
             offset += hashLength;
 
             byte[] nonce = input.Skip(offset).Take(nonceLength).ToArray();
@@ -1543,6 +1661,7 @@ namespace Mango.Cipher
 
             return (hash, nonce, rounds, sequence, ciphertext);
         }
+
         public byte[] GetPayloadOnly(byte[] encrypted)
         {
             if (encrypted == null)
