@@ -1638,26 +1638,49 @@ namespace Mango.Workbench
             return ($"Query Console completed successfully.", ConsoleColor.Green);
         }
 
-        public static (string, ConsoleColor) AddTransformHandler(CryptoLib cryptoLib, string[] args,
-            List<byte> sequence)
+        public static (string, ConsoleColor) AddTransformHandler(CryptoLib cryptoLib, string[] args, List<byte> sequence)
         {
             if (args.Length == 0)
             {
-                return ("No transform specified. Please provide a valid transform name.", ConsoleColor.Red);
+                return ("No transform specified. Please provide a valid transform name or ID.", ConsoleColor.Red);
             }
 
-            string transformName = args[0];
+            string input = args[0];
+
+            // ✅ Try parsing as menu ordinal (e.g., "10" means the 10th visible transform)
+            if (byte.TryParse(input, out byte menuOrdinal))
+            {
+                // Build forward-only, menu-visible transforms
+                var forwardTransforms = cryptoLib.TransformRegistry.Values
+                    .Where(t => t.Id <= t.InverseId)
+                    .OrderBy(t => t.Id)
+                    .ToList();
+
+                if (menuOrdinal >= 1 && menuOrdinal <= forwardTransforms.Count)
+                {
+                    var tform = forwardTransforms[menuOrdinal - 1];
+
+                    // ✅ Push the *ordinal*, not the ID
+                    MangoConsole.CommandStack.Push(menuOrdinal.ToString());
+
+                    return ($"{tform.Name} (Menu #{menuOrdinal}, ID:{tform.Id}) added successfully.", ConsoleColor.Green);
+                }
+
+                return ($"No transform found at menu position {menuOrdinal}.", ConsoleColor.Red);
+            }
+
+            // ✅ Otherwise, treat input as a transform name
             var transform = cryptoLib.TransformRegistry.Values
-                .FirstOrDefault(t => t.Name.Equals(transformName, StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(t => t.Name.Equals(input, StringComparison.OrdinalIgnoreCase));
 
             if (transform != null)
             {
-                sequence.Add((byte)transform.Id);
-                return ($"{transformName} Transform added successfully.", ConsoleColor.Green);
+                MangoConsole.CommandStack.Push(transform.Id.ToString());
+                return ($"{transform.Name} Transform added successfully.", ConsoleColor.Green);
             }
             else
             {
-                return ($"Transform '{transformName}' not found.", ConsoleColor.Red);
+                return ($"Transform '{input}' not found.", ConsoleColor.Red);
             }
         }
 
