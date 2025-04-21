@@ -397,6 +397,7 @@ namespace Mango.Workbench
             { "run visualization", (args => VisualizationHandler(localEnv, seq.GetIDs(sequence).ToList(), args), 2, "Run the Visualization functionality.", "run visualization [BITS|BYTES] [ROWS N] [COLUMNS N] [OFFSET N]", experimental: true) },
             { "run analyzer", (args => AnalyzerHandler(), 2, "Run the Analyzer functionality.", "run analyzer", experimental: true) },
             { "run comparative analysis", (args => RunComparativeAnalysisHandler(localEnv, sequence), 3, "Compare analysis results between Mango and AES.", "run comparative analysis", experimental: false) },
+            { "run comparative throughput", (args => RunComparativeThroughput(localEnv), 3, "Compare throughput between Mango and AES.", "run comparative throughput", experimental: false) },
             { "run MangoCipher", (args => MangoCipherHandler(localEnv, args), 2, "Run the Mango cipher engine directly.", "run MangoCipher", experimental: true) },
             { "run auto weight tuner", (args => RunAutoWeightTunerHandler(localEnv), 4, "Automatically tune weights.", "run auto weight tuner", experimental: true) },
 

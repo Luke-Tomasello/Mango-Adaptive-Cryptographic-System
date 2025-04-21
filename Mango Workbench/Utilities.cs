@@ -3512,7 +3512,7 @@ namespace Mango.Utilities
             }
         }
 
-        private static byte[] GenerateRandomBytes(int length)
+        public static byte[] GenerateRandomBytes(int length)
         {
             byte[] bytes = new byte[length];
             using (var rng = RandomNumberGenerator.Create())

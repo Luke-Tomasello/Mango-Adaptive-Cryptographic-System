@@ -30,6 +30,7 @@ using Mango.SQL;
 using Mango.Utilities;
 using System.Diagnostics;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -70,11 +71,13 @@ namespace Mango.Workbench
 
             return results;
         }
+
         public static (string, ConsoleColor) ProfileTransformsWorker(ExecutionEnvironment parentEnv, string[] args)
         {
             if (args.Length < 1)
             {
-                return ("[Error] Please specify a profile name (e.g., ApplyTransforms[X] + GetCoins[X])", ConsoleColor.Red);
+                return ("[Error] Please specify a profile name (e.g., ApplyTransforms[X] + GetCoins[X])",
+                    ConsoleColor.Red);
             }
 
             string testName = string.Join(" ", args);
@@ -182,7 +185,8 @@ namespace Mango.Workbench
         public static (string, ConsoleColor) BenchmarkTransforms(ExecutionEnvironment localEnv, string[] args)
         {
             // ⚠️ Warn user about overwriting existing benchmark data
-            ColorConsole.WriteLine("<Yellow>WARNING:</Yellow> This will overwrite all existing benchmark data in <Cyan>TransformBenchmarkResults.txt</Cyan> and <Cyan>TransformBenchmarkResults.json</Cyan>.");
+            ColorConsole.WriteLine(
+                "<Yellow>WARNING:</Yellow> This will overwrite all existing benchmark data in <Cyan>TransformBenchmarkResults.txt</Cyan> and <Cyan>TransformBenchmarkResults.json</Cyan>.");
             Console.Write("Are you sure you want to continue? (Y/N): ");
 
             var key = Console.ReadKey(intercept: true);
@@ -249,50 +253,52 @@ namespace Mango.Workbench
                         break;
 
                     case "weights":
+                    {
+                        if (localEnv.Globals.Mode == null)
+                            return ("Error: Mode is not set.", ConsoleColor.Red);
+
+                        // Retrieve actual weights from MetricsRegistry
+                        var actualWeights =
+                            localEnv.CryptoAnalysis.MetricsRegistry.ToDictionary(kvp => kvp.Key,
+                                kvp => kvp.Value.Weight);
+
+                        // Retrieve known weight tables dynamically
+                        bool foundCryptographic = MetricInfoHelper.TryGetWeights(OperationModes.Cryptographic,
+                            out var cryptographicWeights);
+                        bool foundExploratory =
+                            MetricInfoHelper.TryGetWeights(OperationModes.Exploratory, out var exploratoryWeights);
+
+                        if (!foundCryptographic || !foundExploratory)
+                            return ("Error: Could not retrieve predefined mode weights.", ConsoleColor.Red);
+
+                        // Compare the active weights to the official tables
+                        bool matchesCryptographic = actualWeights.OrderBy(kvp => kvp.Key)
+                            .SequenceEqual(cryptographicWeights.OrderBy(kvp => kvp.Key));
+                        bool matchesExploratory = actualWeights.OrderBy(kvp => kvp.Key)
+                            .SequenceEqual(exploratoryWeights.OrderBy(kvp => kvp.Key));
+
+                        // Determine the mode label
+                        string modeLabel;
+                        if (matchesCryptographic && !matchesExploratory)
+                            modeLabel = "<green>Active Mode: Cryptographic</green>";
+                        else if (matchesExploratory && !matchesCryptographic)
+                            modeLabel = "<green>Active Mode: Exploratory</green>";
+                        else
+                            modeLabel = "<yellow>Active Mode: None (No Weighting)</yellow>";
+                        ;
+
+                        // Display weights with detected mode label
+                        ColorConsole.WriteLine($"{modeLabel}\n");
+                        foreach (var kvp in actualWeights)
                         {
-                            if (localEnv.Globals.Mode == null)
-                                return ("Error: Mode is not set.", ConsoleColor.Red);
-
-                            // Retrieve actual weights from MetricsRegistry
-                            var actualWeights = localEnv.CryptoAnalysis.MetricsRegistry.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Weight);
-
-                            // Retrieve known weight tables dynamically
-                            bool foundCryptographic = MetricInfoHelper.TryGetWeights(OperationModes.Cryptographic,
-                                out var cryptographicWeights);
-                            bool foundExploratory =
-                                MetricInfoHelper.TryGetWeights(OperationModes.Exploratory, out var exploratoryWeights);
-
-                            if (!foundCryptographic || !foundExploratory)
-                                return ("Error: Could not retrieve predefined mode weights.", ConsoleColor.Red);
-
-                            // Compare the active weights to the official tables
-                            bool matchesCryptographic = actualWeights.OrderBy(kvp => kvp.Key)
-                                .SequenceEqual(cryptographicWeights.OrderBy(kvp => kvp.Key));
-                            bool matchesExploratory = actualWeights.OrderBy(kvp => kvp.Key)
-                                .SequenceEqual(exploratoryWeights.OrderBy(kvp => kvp.Key));
-
-                            // Determine the mode label
-                            string modeLabel;
-                            if (matchesCryptographic && !matchesExploratory)
-                                modeLabel = "<green>Active Mode: Cryptographic</green>";
-                            else if (matchesExploratory && !matchesCryptographic)
-                                modeLabel = "<green>Active Mode: Exploratory</green>";
-                            else
-                                modeLabel = "<yellow>Active Mode: None (No Weighting)</yellow>";
-                            ;
-
-                            // Display weights with detected mode label
-                            ColorConsole.WriteLine($"{modeLabel}\n");
-                            foreach (var kvp in actualWeights)
-                            {
-                                Console.WriteLine(
-                                    $"{kvp.Key,-22}: {kvp.Value:F4}"); // Left-align metric names, format weight to 4 decimals
-                            }
-
-                            Console.WriteLine("\nPress any key to return to the main menu...");
-                            Console.ReadKey();
-                            break;
+                            Console.WriteLine(
+                                $"{kvp.Key,-22}: {kvp.Value:F4}"); // Left-align metric names, format weight to 4 decimals
                         }
+
+                        Console.WriteLine("\nPress any key to return to the main menu...");
+                        Console.ReadKey();
+                        break;
+                    }
 
 
                     default:
@@ -657,7 +663,8 @@ namespace Mango.Workbench
             }
         }
 
-        public static (string, ConsoleColor) VisualizationHandler(ExecutionEnvironment localEnv, List<byte> userSequence, string[] args)
+        public static (string, ConsoleColor) VisualizationHandler(ExecutionEnvironment localEnv,
+            List<byte> userSequence, string[] args)
         {
             // Normalize arguments to uppercase for case-insensitive handling
             var normalizedArgs = args.Select(arg => arg.ToUpperInvariant()).ToArray();
@@ -752,7 +759,8 @@ namespace Mango.Workbench
 
         #region ComparativeAnalysis
 
-        public static (string, ConsoleColor) RunComparativeAnalysisHandler(ExecutionEnvironment localEnv, List<string> sequence)
+        public static (string, ConsoleColor) RunComparativeAnalysisHandler(ExecutionEnvironment localEnv,
+            List<string> sequence)
         {
             // ✅ LocalEnvironment parses the sequence and sets the Global Rounds, which are then used throughout localStateEnv
             using (var localStateEnv = new LocalEnvironment(localEnv, sequence))
@@ -761,9 +769,177 @@ namespace Mango.Workbench
                 return RunComparativeAnalysis(localEnv, localStateEnv.ParsedSequence);
             }
         }
+        /// <summary>
+        /// Runs a high-volume throughput benchmark comparing Mango vs AES across all supported input types.
+        /// 
+        /// For each type (Combined, Random, Natural, Sequence), this test:
+        /// - Encrypts and decrypts a series of fixed-size blocks using Mango and AES
+        /// - Times only the core encryption/decryption paths (excluding setup overhead)
+        /// - Reports speeds in MB/s and Gbps
+        /// - Produces a final average comparison across all types
+        /// 
+        /// Returns a formatted string summary and a color code for visual CLI feedback.
+        /// </summary>
+        /// <param name="localEnv">The active execution environment, containing CryptoLib instance and configuration context.</param>
+        /// <returns>A tuple containing the benchmark summary and console display color.</returns>
+        public static (string, ConsoleColor) RunComparativeThroughput(ExecutionEnvironment localEnv)
+        {
+            int blockCount = 128;
+            int blockSize = 4096;
+            bool decrypt = true;
+            var resultBuilder = new StringBuilder();
+            ConsoleColor color = ConsoleColor.Gray;
 
-        public static (string, ConsoleColor) RunComparativeAnalysis(ExecutionEnvironment localEnv,
-            SequenceHelper.ParsedSequence parsedSequence)
+            double totalMangoEncryptBytes = 0, totalMangoEncryptTime = 0;
+            double totalMangoDecryptBytes = 0, totalMangoDecryptTime = 0;
+            double totalAesEncryptBytes = 0, totalAesEncryptTime = 0;
+            double totalAesDecryptBytes = 0, totalAesDecryptTime = 0;
+
+            foreach (InputType type in Enum.GetValues(typeof(InputType)))
+            {
+                List<byte[]> inputBlocks = new();
+                for (int i = 0; i < blockCount; i++)
+                {
+                    inputBlocks.Add(GenerateTestInput(blockSize, type));
+                }
+
+                InputProfile profile = InputProfiler.GetInputProfile(inputBlocks[0]);
+
+                List<byte[]> mangoEncryptedBlocks = new();
+                byte[] encryptedFirst = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, inputBlocks[0]);
+                mangoEncryptedBlocks.Add(encryptedFirst);
+
+                Stopwatch swEncrypt = Stopwatch.StartNew();
+                for (int i = 1; i < inputBlocks.Count; i++)
+                {
+                    byte[] encrypted = localEnv.Crypto.EncryptBlock(inputBlocks[i]);
+                    mangoEncryptedBlocks.Add(encrypted);
+                }
+                swEncrypt.Stop();
+
+                double mangoEncryptBytes = (blockCount - 1) * blockSize;
+                double mangoEncryptMBps = mangoEncryptBytes / (1024.0 * 1024.0) / swEncrypt.Elapsed.TotalSeconds;
+                double mangoEncryptBps = (mangoEncryptBytes * 8) / swEncrypt.Elapsed.TotalSeconds;
+
+                totalMangoEncryptBytes += mangoEncryptBytes;
+                totalMangoEncryptTime += swEncrypt.Elapsed.TotalSeconds;
+
+                double mangoDecryptMBps = 0;
+                double mangoDecryptBps = 0;
+
+                if (decrypt)
+                {
+                    List<byte[]> mangoDecryptedBlocks = new();
+                    byte[] decryptedFirst = localEnv.Crypto.Decrypt(mangoEncryptedBlocks[0]);
+                    mangoDecryptedBlocks.Add(decryptedFirst);
+
+                    Stopwatch swDecrypt = Stopwatch.StartNew();
+                    for (int i = 1; i < mangoEncryptedBlocks.Count; i++)
+                    {
+                        byte[] decrypted = localEnv.Crypto.DecryptBlock(mangoEncryptedBlocks[i]);
+                        mangoDecryptedBlocks.Add(decrypted);
+                    }
+                    swDecrypt.Stop();
+
+                    double mangoDecryptBytes = (blockCount - 1) * blockSize;
+                    mangoDecryptMBps = mangoDecryptBytes / (1024.0 * 1024.0) / swDecrypt.Elapsed.TotalSeconds;
+                    mangoDecryptBps = (mangoDecryptBytes * 8) / swDecrypt.Elapsed.TotalSeconds;
+
+                    totalMangoDecryptBytes += mangoDecryptBytes;
+                    totalMangoDecryptTime += swDecrypt.Elapsed.TotalSeconds;
+                }
+
+                string password = "mango_benchmark";
+                byte[] salt = GenerateRandomBytes(16);
+                using var deriveBytes = new Rfc2898DeriveBytes(password, salt, 100_000);
+                byte[] aesKey = deriveBytes.GetBytes(32);
+                byte[] aesIV = deriveBytes.GetBytes(16);
+
+                using Aes aes = Aes.Create();
+                aes.Key = aesKey;
+                aes.IV = aesIV;
+                aes.Mode = CipherMode.CBC;
+                aes.Padding = PaddingMode.PKCS7;
+                using ICryptoTransform encryptor = aes.CreateEncryptor();
+                using ICryptoTransform decryptor = aes.CreateDecryptor();
+
+                List<byte[]> aesEncryptedBlocks = new();
+
+                Stopwatch swAesEncrypt = Stopwatch.StartNew();
+                for (int i = 0; i < inputBlocks.Count; i++)
+                {
+                    byte[] encrypted = encryptor.TransformFinalBlock(inputBlocks[i], 0, inputBlocks[i].Length);
+                    aesEncryptedBlocks.Add(encrypted);
+                }
+                swAesEncrypt.Stop();
+
+                double aesEncryptBytes = blockCount * blockSize;
+                double aesEncryptMBps = aesEncryptBytes / (1024.0 * 1024.0) / swAesEncrypt.Elapsed.TotalSeconds;
+                double aesEncryptBps = (aesEncryptBytes * 8) / swAesEncrypt.Elapsed.TotalSeconds;
+
+                totalAesEncryptBytes += aesEncryptBytes;
+                totalAesEncryptTime += swAesEncrypt.Elapsed.TotalSeconds;
+
+                double aesDecryptMBps = 0;
+                double aesDecryptBps = 0;
+
+                if (decrypt)
+                {
+                    List<byte[]> aesDecryptedBlocks = new();
+                    Stopwatch swAesDecrypt = Stopwatch.StartNew();
+                    for (int i = 0; i < aesEncryptedBlocks.Count; i++)
+                    {
+                        byte[] decrypted = decryptor.TransformFinalBlock(aesEncryptedBlocks[i], 0, aesEncryptedBlocks[i].Length);
+                        aesDecryptedBlocks.Add(decrypted);
+                    }
+                    swAesDecrypt.Stop();
+
+                    double aesDecryptBytes = blockCount * blockSize;
+                    aesDecryptMBps = aesDecryptBytes / (1024.0 * 1024.0) / swAesDecrypt.Elapsed.TotalSeconds;
+                    aesDecryptBps = (aesDecryptBytes * 8) / swAesDecrypt.Elapsed.TotalSeconds;
+
+                    totalAesDecryptBytes += aesDecryptBytes;
+                    totalAesDecryptTime += swAesDecrypt.Elapsed.TotalSeconds;
+                }
+
+                double speedRatio = mangoEncryptMBps / aesEncryptMBps;
+                string assessment = speedRatio >= 1.2
+                    ? $"⚡ Mango is {speedRatio:F1}× faster than AES"
+                    : speedRatio < 0.9
+                        ? $"🐢 Mango is {1 / speedRatio:F1}× slower than AES"
+                        : "⚖️ Speeds are roughly equivalent";
+
+                if (speedRatio >= 1.5)
+                    color = ConsoleColor.Green;
+                else if (speedRatio <= 0.75)
+                    color = ConsoleColor.Red;
+                else
+                    color = ConsoleColor.Yellow;
+
+                resultBuilder.AppendLine($"Input Type: {type}");
+                resultBuilder.AppendLine($"Mango Encrypt: {mangoEncryptMBps:F2} MB/s ({mangoEncryptBps / 1_000_000_000:F2} Gbps)");
+                if (decrypt) resultBuilder.AppendLine($"Mango Decrypt: {mangoDecryptMBps:F2} MB/s ({mangoDecryptBps / 1_000_000_000:F2} Gbps)");
+                resultBuilder.AppendLine($"AES Encrypt:   {aesEncryptMBps:F2} MB/s ({aesEncryptBps / 1_000_000_000:F2} Gbps)");
+                if (decrypt) resultBuilder.AppendLine($"AES Decrypt:   {aesDecryptMBps:F2} MB/s ({aesDecryptBps / 1_000_000_000:F2} Gbps)");
+                resultBuilder.AppendLine(assessment);
+                resultBuilder.AppendLine(new string('-', 50));
+            }
+
+            double mangoAvgEncMBps = totalMangoEncryptBytes / (1024.0 * 1024.0) / totalMangoEncryptTime;
+            double aesAvgEncMBps = totalAesEncryptBytes / (1024.0 * 1024.0) / totalAesEncryptTime;
+            double mangoAvgEncBps = (totalMangoEncryptBytes * 8) / totalMangoEncryptTime;
+            double aesAvgEncBps = (totalAesEncryptBytes * 8) / totalAesEncryptTime;
+            double finalRatio = mangoAvgEncMBps / aesAvgEncMBps;
+
+            resultBuilder.AppendLine("🏁 Overall Average:");
+            resultBuilder.AppendLine($"Mango Encrypt Avg: {mangoAvgEncMBps:F2} MB/s ({mangoAvgEncBps / 1_000_000_000:F2} Gbps)");
+            resultBuilder.AppendLine($"AES Encrypt Avg:   {aesAvgEncMBps:F2} MB/s ({aesAvgEncBps / 1_000_000_000:F2} Gbps)");
+            resultBuilder.AppendLine($"⚡ Mango is {finalRatio:F1}× faster on average");
+
+            return (resultBuilder.ToString(), color);
+        }
+
+        public static (string, ConsoleColor) RunComparativeAnalysis(ExecutionEnvironment localEnv, SequenceHelper.ParsedSequence parsedSequence)
         {
             SequenceHelper seqHelper = new(localEnv.Crypto);
             List<byte> sequence = seqHelper.GetIDs(parsedSequence);
