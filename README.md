@@ -132,3 +132,7 @@ This example demonstrates block-based encryption using Mango. It encrypts and de
 Ideal for exploring how Mango might integrate into streaming or block-wise systems.
 
 📘 Full documentation is available in: `Workbench/Docs/`
+
+> **Note on Speed Comparisons:**  
+> The reported performance comparisons include AES's expensive key derivation step using PBKDF2 (e.g., 100,000 iterations), which is common in password-based encryption scenarios. Mango does not require this step and has minimal startup cost.  
+> In scenarios involving bulk data encryption where the AES key is reused, **raw AES cipher throughput is faster than Mango.**
