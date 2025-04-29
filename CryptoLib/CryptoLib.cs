@@ -24,6 +24,7 @@
    * =============================================
    */
 
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -32,24 +33,38 @@ namespace Mango.Cipher
 {
     public class CryptoLibOptions
     {
-        public CryptoLibOptions(int rounds = 9, byte[]? defaultIV = null, Behaviors behavior = Behaviors.None)
+        public CryptoLibOptions(
+            int rounds = 9,
+            byte[]? sessionIV = null,
+            string zoneInfo = null,
+            Behaviors behavior = Behaviors.None)
         {
             Rounds = rounds;
-            DefaultIV = defaultIV ?? new CryptoUtils().GenerateSecureIV();
+            SessionIV = sessionIV ?? new CryptoUtils().GenerateSecureIV();
+            ZoneInfo = zoneInfo;
             Behavior = behavior;
         }
+
         public CryptoLibOptions Dupe()
         {
             return new CryptoLibOptions(
                 rounds: this.Rounds,
-                defaultIV: this.DefaultIV != null ? (byte[])this.DefaultIV.Clone() : null,
+                sessionIV: this.SessionIV != null ? (byte[])this.SessionIV.Clone() : null,
+                zoneInfo: this.ZoneInfo,
                 behavior: this.Behavior
             );
         }
         /// <summary>
         /// Default Initialization Vector (IV) used in encryption/decryption.
         /// </summary>
-        public byte[]? DefaultIV { get; set; } = null;
+        public byte[]? SessionIV { get; set; } = null;
+
+        /// <summary>
+        /// Optional zone-specific label. 
+        /// If set, it is appended to the password before cryptographic key (CBox) generation.
+        /// If null, standard password-only behavior is used.
+        /// </summary>
+        public string ZoneInfo { get; set; } = null;
 
         /// <summary>
         /// Number of default rounds for transformations.
@@ -71,6 +86,9 @@ namespace Mango.Cipher
 
     public class CryptoLib
     {
+        const int HashLength = 32;
+        const int IVLength = 12;
+
         #region Construction
         private byte[] cBox; // 1D array of session-specific masks
         private byte[] inverseCBox; // 1D array for inverse mapping of masks
@@ -131,6 +149,16 @@ namespace Mango.Cipher
         public CryptoLib(byte[] seed, CryptoLibOptions options = null)
         {
             Options = options ?? new CryptoLibOptions();
+
+            // 🔹 If ZoneInfo is provided, append it to the seed before CBox generation
+            if (!string.IsNullOrEmpty(Options.ZoneInfo))
+            {
+                byte[] zoneBytes = Encoding.UTF8.GetBytes(Options.ZoneInfo);
+                byte[] combined = new byte[seed.Length + zoneBytes.Length];
+                Buffer.BlockCopy(seed, 0, combined, 0, seed.Length);
+                Buffer.BlockCopy(zoneBytes, 0, combined, seed.Length, zoneBytes.Length);
+                seed = combined;
+            }
 
             if (cBox == null || cBox.Length != 256)
             {
@@ -1197,6 +1225,7 @@ namespace Mango.Cipher
         );
         // 🔐 DefaultProfile (Adaptive Baseline for Combined Input)
         // --------------------------------------------------------
+        // Note: Header encryption uses DefaultProfile, currently defined as Combined god-sequence (GR:6).
         // ✅ Cryptographic Mode: GR:6, TRs: specified per transform
         // ✅ Derived from Munge(A)(6) L5 winner
         // ✅ Aggregate Score: 90.00 | Pass Count: 9/9
@@ -1226,6 +1255,221 @@ namespace Mango.Cipher
             GlobalRounds: 6
         );
 
+        #region Header Management
+        private byte[] EncryptHeader(byte[] input)
+        {
+            var trConfig = DefaultProfile.Sequence;
+            using var sha256 = SHA256.Create();
+            byte[] hash = sha256.ComputeHash(CBox);
+
+            // 📋 Save the current transform rounds to ensure header encryption does not modify global state
+            byte[] saveRounds = SaveTransformRounds();
+
+            // Ensure all transforms in the sequence are supported by the current library version.
+            // If any transform ID exceeds the supported set, this indicates a version mismatch.
+            if (CheckVersion(trConfig, out byte required) == false)
+                throw new InvalidOperationException($"Encrypted packet requires CryptoLib version {required} or higher. Decryption aborted.");
+
+            // Set GR and TRs from header
+            var rounds = DefaultProfile.GlobalRounds;
+            ApplyTransformRounds(trConfig);
+
+            // Locally derive the IV
+            byte[] constructedIV = CBox.Take(12).ToArray();
+
+            // Use constructedIV directly when needed for local header encryption/decryption,
+            // without mutating Options.SessionIV globally.
+            // Compute derived Coins
+            byte[] combinedHash = CombineHashAndNonce(hash, constructedIV);
+            byte[] Coins = GetCoins(combinedHash);
+
+            // Prepare a copy of the input
+            byte[] data = new byte[input.Length];
+            Array.Copy(input, data, input.Length);
+
+            // Get just the transform IDs
+            byte[] idOnlySequence = trConfig.Select(p => p.ID).ToArray();
+
+            // Apply the transformations (forward direction)
+            for (int i = 0; i < rounds; i++)
+            {
+                data = ApplyTransformations(idOnlySequence, data, Coins, reverse: false);
+            }
+
+            // 🔄 Restore original transform rounds after header encryption to maintain packet encryption consistency
+            RestoreTransformRounds(saveRounds);
+
+            return data; // ✅ Encrypted payload without header
+        }
+
+        private byte[] DecryptHeader(byte[] input)
+        {
+            // Use the baked-in default sequence
+            var trConfig = GenerateReverseSequence(DefaultProfile.Sequence);
+
+            // 📋 Save the current transform rounds to ensure header encryption does not modify global state
+            byte[] saveRounds = SaveTransformRounds();
+
+            // Set GR and TRs from default config
+            var rounds = DefaultProfile.GlobalRounds;
+            ApplyTransformRounds(trConfig);
+
+            using var sha256 = SHA256.Create();
+            byte[] hash = sha256.ComputeHash(CBox);
+
+            // Locally derive the IV
+            byte[] constructedIV = CBox.Take(12).ToArray();
+
+            // Use constructedIV directly when needed for local header encryption/decryption,
+            // without mutating Options.SessionIV globally.
+            // Compute derived Coins for feedback
+            byte[] combinedHash = CombineHashAndNonce(hash, constructedIV);
+            byte[] Coins = GetCoins(combinedHash);
+
+            // Prepare a working copy of the input
+            byte[] data = new byte[input.Length];
+            Array.Copy(input, data, input.Length);
+
+            // Get just the transform IDs
+            byte[] idOnlySequence = trConfig.Select(p => p.ID).ToArray();
+
+            // Apply the transformations (reverse direction)
+            for (int i = 0; i < rounds; i++)
+            {
+                data = ApplyTransformations(idOnlySequence, data, Coins, reverse: true);
+            }
+            
+            // 🔄 Restore original transform rounds after header encryption to maintain packet encryption consistency
+            RestoreTransformRounds(saveRounds);
+
+            return data; // ✅ Decrypted original header
+        }
+        // Decrypts only the header portion of an encrypted blob, leaving the ciphertext body untouched.
+        // Used for partial decryption workflows where full body decryption is deferred.
+        private byte[] DecryptHeaderOnly(byte[] encrypted)
+        {
+            const int assumedMaxSequenceLength = 8;
+
+            // Step 1: Calculate estimated header size (optimistic guess for up to 8 transforms)
+            int estimatedHeaderSize = 2
+                                      + HashLength
+                                      + IVLength
+                                      + 1 // Rounds
+                                      + 1 // SequenceLength
+                                      + (assumedMaxSequenceLength * 2); // ID:TR pairs (2 bytes each)
+
+            // Step 2: Slice estimated header and remaining body
+            byte[] encryptedEstimatedHeader = SliceFirstNBytes(encrypted, estimatedHeaderSize);
+            byte[] encryptedBodyRemainder = SliceRemainingBytes(encrypted, estimatedHeaderSize);
+
+            // Step 3: Decrypt the estimated header
+            byte[] decryptedEstimatedHeader = DecryptHeader(encryptedEstimatedHeader);
+
+            // Step 4: Read SequenceLength byte
+            int sequenceLengthOffset = 2 + HashLength + IVLength + 1; // after Version, Hash, IV, Rounds
+            byte sequenceLength = decryptedEstimatedHeader[sequenceLengthOffset];
+
+            // Step 5: Calculate true full header size
+            int trueHeaderSize = 2 + HashLength + IVLength + 1 + 1 + (sequenceLength * 2);
+
+#if DEBUG
+            // 📜 DEBUG: Dump decrypted header fields in left-to-right order
+
+            //ParseHeaderForDebug(decryptedEstimatedHeader);
+#endif
+            // Step 6: Check if lucky
+            if (sequenceLength <= assumedMaxSequenceLength)
+            {
+                // ✅ Got lucky: We decrypted enough
+                // ✅ Slice true decrypted header cleanly
+                byte[] realDecryptedHeader = SliceFirstNBytes(decryptedEstimatedHeader, trueHeaderSize);
+
+                // ✅ Slice encrypted body correctly, based on trueHeaderSize
+                byte[] correctedEncryptedBody = SliceRemainingBytes(encrypted, trueHeaderSize);
+
+                // ✅ Return clean merged result
+                return CombineArrays(realDecryptedHeader, correctedEncryptedBody);
+            }
+            else
+            {
+                // 🔁 Didn't get lucky: need to decrypt again using real header size
+                encryptedEstimatedHeader = SliceFirstNBytes(encrypted, trueHeaderSize);
+                byte[] encryptedBody = SliceRemainingBytes(encrypted, trueHeaderSize);
+
+                decryptedEstimatedHeader = DecryptHeader(encryptedEstimatedHeader);
+
+                // ✅ Return clean merged result
+                return CombineArrays(decryptedEstimatedHeader, encryptedBody);
+            }
+        }
+#if DEBUG
+        private void ParseHeaderForDebug(byte[] decryptedHeader)
+        {
+            // 📜 Debug header parser: Extracts and displays fields from a decrypted Mango header.
+            int offset = 0;
+
+            byte versionMajor = decryptedHeader[offset++];
+            byte versionMinor = decryptedHeader[offset++];
+
+            byte[] hash = new byte[HashLength];
+            Buffer.BlockCopy(decryptedHeader, offset, hash, 0, HashLength);
+            offset += HashLength;
+
+            byte[] iv = new byte[IVLength];
+            Buffer.BlockCopy(decryptedHeader, offset, iv, 0, IVLength);
+            offset += IVLength;
+
+            byte roundsByte = decryptedHeader[offset++];
+            byte sequenceLengthByte = decryptedHeader[offset++];
+
+            List<(byte ID, byte TR)> idTrPairs = new();
+            for (int i = 0; i < sequenceLengthByte; i++)
+            {
+                byte id = decryptedHeader[offset++];
+                byte tr = decryptedHeader[offset++];
+                idTrPairs.Add((id, tr));
+            }
+
+            // 🌟 Output
+            Console.WriteLine($"Version: {versionMajor}.{versionMinor}");
+            Console.WriteLine($"Hash: {string.Join(",", hash)}");
+            Console.WriteLine($"IV: {string.Join(",", iv)}");
+            Console.WriteLine($"Rounds: {roundsByte}");
+            Console.WriteLine($"Sequence Length: {sequenceLengthByte}");
+
+            Console.WriteLine("Transform Sequence:");
+            foreach (var (id, tr) in idTrPairs)
+            {
+                Console.WriteLine($"  ID: {id}, TR: {tr}");
+            }
+        }
+#endif
+
+
+        private byte[] SliceFirstNBytes(byte[] input, int length)
+        {
+            byte[] result = new byte[length];
+            Buffer.BlockCopy(input, 0, result, 0, length);
+            return result;
+        }
+
+        private byte[] SliceRemainingBytes(byte[] input, int start)
+        {
+            int length = input.Length - start;
+            byte[] result = new byte[length];
+            Buffer.BlockCopy(input, start, result, 0, length);
+            return result;
+        }
+
+        private byte[] CombineArrays(byte[] a, byte[] b)
+        {
+            byte[] result = new byte[a.Length + b.Length];
+            Buffer.BlockCopy(a, 0, result, 0, a.Length);
+            Buffer.BlockCopy(b, 0, result, a.Length, b.Length);
+            return result;
+        }
+
+        #endregion Header Management
         public byte[] Encrypt(byte[] input)
         {
             return Encrypt(DefaultProfile.Sequence, DefaultProfile.GlobalRounds, input);
@@ -1234,9 +1478,6 @@ namespace Mango.Cipher
         {
             if (LastHeader == null || LastHeader.Length == 0)
                 throw new InvalidOperationException("❌ First block must be encrypted before EncryptBlock can be used.");
-
-            const int HashLength = 32;
-            const int IVLength = 12;
 
             // Extract the transform config from the stored header
             var (hash, iv, rounds, trConfig, _) = ExtractHeaderAndCiphertext(LastHeader, HashLength, IVLength);
@@ -1285,14 +1526,14 @@ namespace Mango.Cipher
             // done!
             return encrypted;
         }
-
-        public byte[] Decrypt(byte[] encrypted)
+        
+        public byte[] Decrypt(byte[] originalEncryptedInput)
         {
-            const int HashLength = 32;
-            const int IVLength = 12;
+            // 🔓 Decrypt the encrypted header and reattach it to the ciphertext for normal parsing
+            var decryptedHeaderInput = DecryptHeaderOnly(originalEncryptedInput);
 
             // Extract header and transform config
-            var (_, _, rounds, trConfig, ciphertext) = ExtractHeaderAndCiphertext(encrypted, HashLength, IVLength);
+            var (_, _, rounds, trConfig, ciphertext) = ExtractHeaderAndCiphertext(decryptedHeaderInput, HashLength, IVLength);
 
             // Ensure all transforms in the sequence are supported by the current library version.
             // If any transform ID exceeds the supported set, this indicates a version mismatch.
@@ -1308,15 +1549,12 @@ namespace Mango.Cipher
 
             byte[] sequence = trConfig.Select(t => t.ID).ToArray();
 
-            return Decrypt(sequence, encrypted);
+            return Decrypt(sequence, originalEncryptedInput);
         }
         public byte[] DecryptBlock(byte[] input)
         {
             if (LastHeader == null || LastHeader.Length == 0)
                 throw new InvalidOperationException("❌ First block must be decrypted before DecryptBlock can be used.");
-
-            const int HashLength = 32;
-            const int IVLength = 12;
 
             // Extract config from stored header (no payload in LastHeader)
             var (hash, iv, rounds, trConfig, _) = ExtractHeaderAndCiphertext(LastHeader, HashLength, IVLength);
@@ -1359,15 +1597,15 @@ namespace Mango.Cipher
             options ??= Options ?? new CryptoLibOptions();
 
             // ✅ Validate nonce length for consistency with internal assumptions
-            if (options.DefaultIV.Length != 12)
-                throw new ArgumentException("Nonce/IV must be 12 bytes.");
+            if (options.SessionIV.Length != IVLength)
+                throw new ArgumentException($"Nonce/IV must be {IVLength} bytes.");
 
             // ✅ Compute a hash of the input data (used for coin generation)
             using var sha256 = SHA256.Create();
             byte[] hash = sha256.ComputeHash(input);
 
             // ✅ Combine hash and nonce to generate randomness (coins)
-            byte[] combinedHash = CombineHashAndNonce(hash, options.DefaultIV);
+            byte[] combinedHash = CombineHashAndNonce(hash, options.SessionIV);
             byte[] Coins = GetCoins(combinedHash);
 
             // ✅ Copy the input so we don’t mutate it
@@ -1387,20 +1625,27 @@ namespace Mango.Cipher
             var trConfig = InferTransformRounds(sequence);
 
             // ✅ Create a minimal header (no ciphertext) and store it
-            var header = PackHeaderAndCiphertext(version.major, version.minor,hash, options.DefaultIV, (byte)options.Rounds, trConfig, Array.Empty<byte>());
+            var header = PackHeaderAndCiphertext(version.major, version.minor,hash, options.SessionIV, (byte)options.Rounds, trConfig, Array.Empty<byte>());
             LastHeader = header;
 
+            // 🔐 Encrypt the header (protects sequence, IV, and metadata from exposure)
+            byte[] encryptedHeader = EncryptHeader(header);
+#if DEBUG
+            byte[] cleartextHeader = DecryptHeader(encryptedHeader);
+            Debug.Assert(cleartextHeader.SequenceEqual(header));
+#endif
             // ✅ Allocate and merge the final encrypted output
-            byte[] fullOutput = new byte[header.Length + data.Length];
-            Buffer.BlockCopy(header, 0, fullOutput, 0, header.Length);
-            Buffer.BlockCopy(data, 0, fullOutput, header.Length, data.Length);
+            byte[] fullOutput = new byte[encryptedHeader.Length + data.Length];
+            Buffer.BlockCopy(encryptedHeader, 0, fullOutput, 0, encryptedHeader.Length);
+            Buffer.BlockCopy(data, 0, fullOutput, encryptedHeader.Length, data.Length);
 
             return fullOutput;
         }
         public byte[] Decrypt(byte[] sequence, byte[] input)
         {
-            const int HashLength = 32;
-            const int IVLength = 12;
+
+            // 🔓 Decrypt the encrypted header and reattach it to the ciphertext for normal parsing
+            input = DecryptHeaderOnly(input);
 
             // Extract the hash, IV, rounds, transform config (ID:TR pairs), and ciphertext.
             // Note: trConfig is now used for version compatibility checking, but the TR values
@@ -1470,7 +1715,32 @@ namespace Mango.Cipher
                     throw new InvalidOperationException($"Transform ID {id} not found in registry.");
             }
         }
-        
+        private byte[] SaveTransformRounds()
+        {
+            // ✅ Save all transform rounds assuming dense, consecutive IDs starting from 1
+            byte[] roundsSnapshot = new byte[TransformRegistry.Count];
+
+            foreach (var kvp in TransformRegistry)
+            {
+                int index = kvp.Key - 1; // IDs start from 1, adjust for 0-based array
+                roundsSnapshot[index] = kvp.Value.Rounds;
+            }
+
+            return roundsSnapshot;
+        }
+
+        private void RestoreTransformRounds(byte[] savedRounds)
+        {
+            if (savedRounds.Length != TransformRegistry.Count)
+                throw new InvalidOperationException("Saved rounds array size mismatch.");
+
+            foreach (var kvp in TransformRegistry)
+            {
+                int index = kvp.Key - 1;
+                kvp.Value.Rounds = savedRounds[index];
+            }
+        }
+
         #region Versioning
         // ======================================================================================
         // Versioning Model for Mango Transform Compatibility
@@ -1667,10 +1937,9 @@ namespace Mango.Cipher
             if (encrypted == null)
                 throw new ArgumentNullException(nameof(encrypted), "Encrypted data cannot be null.");
 
-            const int hashLength = 32;
-            const int nonceLength = 12;
+            encrypted = DecryptHeaderOnly(encrypted);
 
-            var (_, _, _, _, payload) = ExtractHeaderAndCiphertext(encrypted, hashLength, nonceLength);
+            var (_, _, _, _, payload) = ExtractHeaderAndCiphertext(encrypted, HashLength, IVLength);
 
             if (payload == null || payload.Length == 0)
                 throw new InvalidOperationException("Extracted payload is empty or malformed.");
