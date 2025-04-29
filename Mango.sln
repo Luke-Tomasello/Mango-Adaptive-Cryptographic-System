@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangoAC", "MangoAC\MangoAC.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangoBM", "MangoBM\MangoBM.csproj", "{0D786B8F-C40E-45AB-B4AA-FE39B76CAA33}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangoZI", "MangoZI\MangoZI.csproj", "{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -39,6 +41,10 @@ Global
 		{0D786B8F-C40E-45AB-B4AA-FE39B76CAA33}.Debug|x64.Build.0 = Debug|x64
 		{0D786B8F-C40E-45AB-B4AA-FE39B76CAA33}.Release|x64.ActiveCfg = Release|x64
 		{0D786B8F-C40E-45AB-B4AA-FE39B76CAA33}.Release|x64.Build.0 = Release|x64
+		{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}.Debug|x64.Build.0 = Debug|Any CPU
+		{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}.Release|x64.ActiveCfg = Release|Any CPU
+		{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
