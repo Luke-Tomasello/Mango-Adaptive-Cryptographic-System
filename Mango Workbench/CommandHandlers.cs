@@ -1093,7 +1093,7 @@ namespace Mango.Workbench
             //// ✅ Step 1: Create a single CryptoLib instance (instead of scattering instances)
             //CryptoLibOptions options = new CryptoLibOptions(
             //    rounds: localEnv.Globals.Rounds, // ✅ Use dynamically set rounds
-            //    defaultIV: new byte[] { 0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F, 0x70, 0x81, 0x92, 0xA3, 0xB4, 0xC5 },
+            //    sessionIV: new byte[] { 0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F, 0x70, 0x81, 0x92, 0xA3, 0xB4, 0xC5 },
             //    mode: localEnv.Globals.Mode // ✅ Use the actual mode from ExecutionEnvironment
             //);
             //CryptoLib cryptoLib = new CryptoLib(GlobalsInstance.Password, options);

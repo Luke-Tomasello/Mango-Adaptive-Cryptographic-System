@@ -55,7 +55,7 @@ namespace Mango.Workbench
 
                 // ✅ Initialize the cryptographic library with predefined options
                 CryptoLibOptions options = new CryptoLibOptions(
-                    defaultIV: new byte[] { 0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F, 0x70, 0x81, 0x92, 0xA3, 0xB4, 0xC5 },
+                    sessionIV: new byte[] { 0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F, 0x70, 0x81, 0x92, 0xA3, 0xB4, 0xC5 },
                     behavior: Behaviors.AssignBenchmarkValues
                 );
 

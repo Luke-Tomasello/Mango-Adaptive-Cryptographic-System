@@ -76,6 +76,7 @@ namespace Mango.Utilities
 
             // 🔐 Step 2: Encrypt Phase
             var crypto = new CryptoLib("my password");
+
             InputProfile profile = InputProfiler.GetInputProfile(inputBlocks[0]);
 
             List<byte[]> outputBlocks = new();
@@ -89,7 +90,7 @@ namespace Mango.Utilities
             }
 
             // 🔄 Step 3: Simulate decrypting on a new session / machine
-            crypto = new CryptoLib("my password"); // Reinitialization is intentional
+            crypto = new CryptoLib("my password");
 
             List<byte[]> decryptedBlocks = new();
             byte[] decryptedFirst = crypto.Decrypt(outputBlocks[0]);

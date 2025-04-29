@@ -2105,7 +2105,7 @@ namespace Mango.Utilities
             return key switch
             {
                 "TRounds" => _cryptoLib.Options.Rounds,
-                "DefaultIV" => _cryptoLib.Options.DefaultIV,
+                "SessionIV" => _cryptoLib.Options.SessionIV,
                 _ => GetDefaultForUnknownSetting(key)
             };
         }
@@ -3430,13 +3430,13 @@ namespace Mango.Utilities
             // KeyDependency: Setup local CryptoLib with modified password
             CryptoLibOptions options = new CryptoLibOptions(
                 rounds: localEnv.Globals.Rounds,  // ✅ Use dynamically set rounds
-                defaultIV: new byte[] { 0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F, 0x70, 0x81, 0x92, 0xA3, 0xB4, 0xC5 }
+                sessionIV: new byte[] { 0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F, 0x70, 0x81, 0x92, 0xA3, 0xB4, 0xC5 }
             );
             CryptoLib KDcryptoLib = new CryptoLib(ModifiedPassword, options);
 
             // KeyDependency: Mango encryption with modified password
             var MangoKeyDependencyPayload = KDcryptoLib.Encrypt(sequence.ToArray(), localEnv.Globals.Input);
-            MangoKeyDependencyPayload = localEnv.Crypto.GetPayloadOnly(MangoKeyDependencyPayload);
+            MangoKeyDependencyPayload = KDcryptoLib.GetPayloadOnly(MangoKeyDependencyPayload);
 
             // KeyDependency: AES encryption with modified password (conditionally processed)
             byte[]? AESKeyDependencyPayload = null;
@@ -4533,7 +4533,7 @@ namespace Mango.Utilities
             using (var localStatEnvironment = new LocalEnvironment(localEnv))
             {
                 localEnv.Globals.UpdateSetting("InputType", InputType.Random);
-                localEnv.Globals.UpdateSetting("Rounds", 10000);
+                localEnv.Globals.UpdateSetting("Rounds", byte.MaxValue.ToString());
                 byte[] sampleInput = localEnv.Globals.Input;
 
                 foreach (var kvp in localEnv.Crypto.TransformRegistry)
@@ -4619,7 +4619,7 @@ namespace Mango.Utilities
             using (var localStatEnvironment = new LocalEnvironment(localEnv))
             {
                 localEnv.Globals.UpdateSetting("InputType", InputType.Random);
-                localEnv.Globals.UpdateSetting("Rounds", 10000);
+                localEnv.Globals.UpdateSetting("Rounds", byte.MaxValue.ToString());
                 byte[] sampleInput = localEnv.Globals.Input;
 
                 byte[] singleTransform = new byte[] { (byte)benchmarkTransformId };
