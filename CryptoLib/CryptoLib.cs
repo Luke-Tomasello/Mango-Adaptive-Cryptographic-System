@@ -1561,21 +1561,6 @@ namespace Mango.Cipher
 #endif
 
         //[MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private byte[] SliceFirstNBytes(byte[] input, int length)
-        {
-            var result = new byte[length];
-            Buffer.BlockCopy(input, 0, result, 0, length);
-            return result;
-        }
-        //[MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private byte[] SliceRemainingBytes(byte[] input, int start)
-        {
-            var length = input.Length - start;
-            var result = new byte[length];
-            Buffer.BlockCopy(input, start, result, 0, length);
-            return result;
-        }
-        //[MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte[] CombineArrays(byte[] a, byte[] b)
         {
             var result = new byte[a.Length + b.Length];
@@ -2121,23 +2106,6 @@ namespace Mango.Cipher
             var ciphertext = input.Skip(offset).ToArray();
 
             return (hash, nonce, rounds, sequence, ciphertext);
-        }
-
-        private (byte ID, byte TR)[] ParseTransformSequence(byte[] header, int offset, int sequenceLength)
-        {
-            if (header.Length < offset + sequenceLength * 2)
-                throw new ArgumentException("Header is too short to contain the expected transform sequence.");
-
-            var sequence = new (byte ID, byte TR)[sequenceLength];
-
-            for (int i = 0; i < sequenceLength; i++)
-            {
-                var id = header[offset++];
-                var tr = header[offset++];
-                sequence[i] = (id, tr);
-            }
-
-            return sequence;
         }
 
         public byte[] GetPayloadOnly(byte[] encrypted)
