@@ -67,13 +67,13 @@ public class ReportHelper
         // ✅ Handle SCR (screen output)
         if (formats.HasFlag(ReportFormat.SCR))
             foreach (var section in sections)
-            foreach (var line in section)
-            {
-                if (line.Equals(_sectionBreak, StringComparison.Ordinal))
-                    continue;
+                foreach (var line in section)
+                {
+                    if (line.Equals(_sectionBreak, StringComparison.Ordinal))
+                        continue;
 
-                ColorConsole.WriteLine(line);
-            }
+                    ColorConsole.WriteLine(line);
+                }
 
         // ✅ Handle TXT Output (Remove color tags & ignore section breaks)
         if (formats.HasFlag(ReportFormat.TXT) && fileIndex < outputFiles.Length)
@@ -177,12 +177,12 @@ public class ReportHelper
         var colorIndex = 1; // RTF color table starts at index 1
 
         foreach (var line in lines)
-        foreach (var tag in ExtractColorTags(line))
-            if (!colorTable.ContainsKey(tag))
-            {
-                colorTable[tag] = ConvertColorTagToRTF(tag);
-                colorIndex++;
-            }
+            foreach (var tag in ExtractColorTags(line))
+                if (!colorTable.ContainsKey(tag))
+                {
+                    colorTable[tag] = ConvertColorTagToRTF(tag);
+                    colorIndex++;
+                }
 
         return colorTable;
     }

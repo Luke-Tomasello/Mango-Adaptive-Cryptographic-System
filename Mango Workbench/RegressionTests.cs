@@ -24,7 +24,6 @@
  */
 
 using Mango.Adaptive;
-using Mango.Analysis;
 using Mango.Cipher;
 using static Mango.Utilities.UtilityHelpers;
 
@@ -321,7 +320,7 @@ public static class RegressionTests
                 var encrypted = localEnv.Crypto.Encrypt(new[] { id }, input);
                 var decrypted = localEnv.Crypto.Decrypt(new[] { inverse }, encrypted);
 
-                if (!decrypted!.SequenceEqual(input!))
+                if (!decrypted.SequenceEqual(input))
                     failed.Add($"ID: {id} ({kvp.Value.Name})");
             }
         }

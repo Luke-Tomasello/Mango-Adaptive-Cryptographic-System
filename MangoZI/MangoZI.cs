@@ -48,7 +48,7 @@ internal class MangoZI
 
         // 🔓 Step 5: Decrypt (CryptoLib pulls everything it needs from the header)
         var decrypted = crypto.Decrypt(encrypted);
-         
+
         // ✅ Step 6: Verify
         var match = input.SequenceEqual(decrypted!);
         Console.WriteLine(match ? "✅ Decryption successful!" : "❌ Decryption failed.");

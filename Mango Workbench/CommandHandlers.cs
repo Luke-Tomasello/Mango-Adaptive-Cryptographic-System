@@ -245,50 +245,50 @@ public partial class Handlers
                     break;
 
                 case "weights":
-                {
-                    if (localEnv.Globals.Mode == OperationModes.None)
-                        return ("Error: Mode is not set.", ConsoleColor.Red);
+                    {
+                        if (localEnv.Globals.Mode == OperationModes.None)
+                            return ("Error: Mode is not set.", ConsoleColor.Red);
 
-                    // Retrieve actual weights from MetricsRegistry
-                    var actualWeights =
-                        localEnv.CryptoAnalysis.MetricsRegistry.ToDictionary(kvp => kvp.Key,
-                            kvp => kvp.Value.Weight);
+                        // Retrieve actual weights from MetricsRegistry
+                        var actualWeights =
+                            localEnv.CryptoAnalysis.MetricsRegistry.ToDictionary(kvp => kvp.Key,
+                                kvp => kvp.Value.Weight);
 
-                    // Retrieve known weight tables dynamically
-                    var foundCryptographic = MetricInfoHelper.TryGetWeights(OperationModes.Cryptographic,
-                        out var cryptographicWeights);
-                    var foundExploratory =
-                        MetricInfoHelper.TryGetWeights(OperationModes.Exploratory, out var exploratoryWeights);
+                        // Retrieve known weight tables dynamically
+                        var foundCryptographic = MetricInfoHelper.TryGetWeights(OperationModes.Cryptographic,
+                            out var cryptographicWeights);
+                        var foundExploratory =
+                            MetricInfoHelper.TryGetWeights(OperationModes.Exploratory, out var exploratoryWeights);
 
-                    if (!foundCryptographic || !foundExploratory)
-                        return ("Error: Could not retrieve predefined mode weights.", ConsoleColor.Red);
+                        if (!foundCryptographic || !foundExploratory)
+                            return ("Error: Could not retrieve predefined mode weights.", ConsoleColor.Red);
 
-                    // Compare the active weights to the official tables
-                    var matchesCryptographic = actualWeights.OrderBy(kvp => kvp.Key)
-                        .SequenceEqual(cryptographicWeights.OrderBy(kvp => kvp.Key));
-                    var matchesExploratory = actualWeights.OrderBy(kvp => kvp.Key)
-                        .SequenceEqual(exploratoryWeights.OrderBy(kvp => kvp.Key));
+                        // Compare the active weights to the official tables
+                        var matchesCryptographic = actualWeights.OrderBy(kvp => kvp.Key)
+                            .SequenceEqual(cryptographicWeights.OrderBy(kvp => kvp.Key));
+                        var matchesExploratory = actualWeights.OrderBy(kvp => kvp.Key)
+                            .SequenceEqual(exploratoryWeights.OrderBy(kvp => kvp.Key));
 
-                    // Determine the mode label
-                    string modeLabel;
-                    if (matchesCryptographic && !matchesExploratory)
-                        modeLabel = "<green>Active Mode: Cryptographic</green>";
-                    else if (matchesExploratory && !matchesCryptographic)
-                        modeLabel = "<green>Active Mode: Exploratory</green>";
-                    else
-                        modeLabel = "<yellow>Active Mode: None (No Weighting)</yellow>";
-                    ;
+                        // Determine the mode label
+                        string modeLabel;
+                        if (matchesCryptographic && !matchesExploratory)
+                            modeLabel = "<green>Active Mode: Cryptographic</green>";
+                        else if (matchesExploratory && !matchesCryptographic)
+                            modeLabel = "<green>Active Mode: Exploratory</green>";
+                        else
+                            modeLabel = "<yellow>Active Mode: None (No Weighting)</yellow>";
+                        ;
 
-                    // Display weights with detected mode label
-                    ColorConsole.WriteLine($"{modeLabel}\n");
-                    foreach (var kvp in actualWeights)
-                        Console.WriteLine(
-                            $"{kvp.Key,-22}: {kvp.Value:F4}"); // Left-align metric names, format weight to 4 decimals
+                        // Display weights with detected mode label
+                        ColorConsole.WriteLine($"{modeLabel}\n");
+                        foreach (var kvp in actualWeights)
+                            Console.WriteLine(
+                                $"{kvp.Key,-22}: {kvp.Value:F4}"); // Left-align metric names, format weight to 4 decimals
 
-                    Console.WriteLine("\nPress any key to return to the main menu...");
-                    Console.ReadKey();
-                    break;
-                }
+                        Console.WriteLine("\nPress any key to return to the main menu...");
+                        Console.ReadKey();
+                        break;
+                    }
 
 
                 default:
@@ -1079,9 +1079,9 @@ public partial class Handlers
                 OriginalWeights[kvp.Key] = kvp.Value;
 
         foreach (var a in OriginalWeights)
-        foreach (var b in OriginalWeights)
-            if (a.Value > b.Value) // Enforce order
-                RankingRules.Add((a.Key, b.Key));
+            foreach (var b in OriginalWeights)
+                if (a.Value > b.Value) // Enforce order
+                    RankingRules.Add((a.Key, b.Key));
 
 
         // ✅ Step 2: Extract top transforms from BabyMunge results
@@ -1321,9 +1321,9 @@ public partial class Handlers
             .ToDictionary(metric => metric, _ => 0.0);
 
         foreach (var result in results)
-        foreach (var metric in result.Metrics)
-            if (metricSums.ContainsKey(metric.Key))
-                metricSums[metric.Key] += metric.Value;
+            foreach (var metric in result.Metrics)
+                if (metricSums.ContainsKey(metric.Key))
+                    metricSums[metric.Key] += metric.Value;
 
         // ✅ Compute averages safely (avoid divide-by-zero)
         var sequenceCount = results.Count;

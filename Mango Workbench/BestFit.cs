@@ -764,7 +764,7 @@ public partial class Handlers
     ///   the top 10 sequences across relevant prior Munges, it will be cut.
     /// - This means that *no historically successful combination* utilized the transform 
     ///   for the given config — not a random exclusion.
-    private static (string, ConsoleColor) MungeCore(ExecutionEnvironment localEnv, string functionName,
+    private static (string, ConsoleColor) MungeCore(ExecutionEnvironment parentEnv, string functionName,
         IReadOnlyList<byte> validTransformIds, string[] args)
     {
         var loopCounter = 0;
@@ -774,7 +774,7 @@ public partial class Handlers
 #else
             DateTime nextSnapshotTime = DateTime.UtcNow.AddHours(1);
 #endif
-        localEnv.CryptoAnalysis.Initialize();
+        parentEnv.CryptoAnalysis.Initialize();
 
         var threadPoolSize = Environment.ProcessorCount; // Number of available cores
         var analysisQueue =
@@ -783,8 +783,8 @@ public partial class Handlers
                 LogText)>();
 
         // ✅ Extract function-specific arguments from FunctionParms if available
-        args = localEnv.Globals.FunctionParms.ContainsKey(functionName)
-            ? localEnv.Globals.FunctionParms[functionName] // ✅ Use FunctionParms if defined
+        args = parentEnv.Globals.FunctionParms.ContainsKey(functionName)
+            ? parentEnv.Globals.FunctionParms[functionName] // ✅ Use FunctionParms if defined
             : args; // ✅ Fallback to default args
 
         // 🎯 Check if the user specified "-LN" (e.g., "-L5") to skip directly to a given Munge level.
@@ -806,15 +806,15 @@ public partial class Handlers
             // ➤ This prevents interference with shorter runs like L4, which use `State,-L4-...json`.
             // ✅ Ensures safe and isolated resume behavior across different Munge configurations.
             restoredState =
-                MungeStatePersistence.RestoreMungeState(GetStateFilename(localEnv, localEnv.Globals.MaxSequenceLen));
+                MungeStatePersistence.RestoreMungeState(GetStateFilename(parentEnv, parentEnv.Globals.MaxSequenceLen));
             if (restoredState != null)
             {
                 // 🧼 Normalize: If Contenders was null, assign empty list for safe processing
                 restoredState.Contenders ??= new List<SerializableContender>();
 
                 // ✅ Clear current contenders and import restored ones
-                localEnv.CryptoAnalysis.Contenders.Clear();
-                localEnv.CryptoAnalysis.Contenders.AddRange(
+                parentEnv.CryptoAnalysis.Contenders.Clear();
+                parentEnv.CryptoAnalysis.Contenders.AddRange(
                     restoredState.Contenders.Select(c => (c.Sequence, c.AggregateScore, c.Metrics))!
                 );
 
@@ -836,18 +836,18 @@ public partial class Handlers
         // Each "length" represents the number of transforms chained in a single permutation.
         // Example: L3 = all permutations of 3-transform sequences.
         // ======================================================================
-        for (var length = startLength; length <= localEnv.Globals.MaxSequenceLen; length++)
+        for (var length = startLength; length <= parentEnv.Globals.MaxSequenceLen; length++)
         {
             // Check if we are skipping this length entirely
             if (skipTo.HasValue && length < skipTo.Value)
             {
-                LogIfEnabled(localEnv, DebugFlags.StatusMessage,
+                LogIfEnabled(parentEnv, DebugFlags.StatusMessage,
                     $"<Yellow>Skipping sequence length</Yellow> {length}... (Starting at {skipTo.Value})");
                 continue; // 🚀 Skip processing this sequence length
             }
 
             var failureKey =
-                GenerateFailureKey(localEnv, "standard", 0, length, new StateManager(localEnv).GlobalRounds);
+                GenerateFailureKey(parentEnv, "standard", 0, length, new StateManager(parentEnv).GlobalRounds);
             var badSeqCount = SequenceFailSQL.TotalBadSequences(failureKey);
             ColorConsole.WriteLine(
                 $"<Green>Bad Sequences Loaded: " +
@@ -858,12 +858,12 @@ public partial class Handlers
 
             // 🟢 Apply CutList: Reduce transform set based on prior Munge results.
             // Filters out low-performing transforms early, minimizing wasteful permutations.
-            transforms = ApplyCutListFiltering(localEnv, transforms, length);
+            transforms = ApplyCutListFiltering(parentEnv, transforms, length);
 
             // 📊 Preprocess: Estimate total time required for this Munge pass (based on sequence count, machine benchmark, input size, and rounds)
             ColorConsole.WriteLine(
                 $"<Yellow>Calculating time to completion for</Yellow> <Cyan>{transforms.Count}</Cyan> <Yellow>transforms of length</Yellow> <Cyan>{length}</Cyan>...");
-            var totalTime = CalculateTotalMungeTime(localEnv, transforms, length);
+            var totalTime = CalculateTotalMungeTime(parentEnv, transforms, length);
 
             // Pre-cache this since CountPermutations is cheap and doesn't generate sequences
             var totalSequencesForLength = CountPermutations(transforms, length);
@@ -881,7 +881,7 @@ public partial class Handlers
             var skippedCount = 0;
 
             var estimated = TimeSpan.FromMilliseconds(totalTime);
-            LogIfEnabled(localEnv, DebugFlags.StatusMessage,
+            LogIfEnabled(parentEnv, DebugFlags.StatusMessage,
                 $"<Green>RunMunge evaluating transformations of length</Green> {length}... " +
                 $"<Yellow>(Estimated time: {estimated:d\\.hh\\:mm\\:ss})</Yellow>");
 
@@ -938,42 +938,46 @@ public partial class Handlers
                     {
                         try
                         {
+                            // create a thread environment
+                            var threadEnv = new ExecutionEnvironment(parentEnv);
+                            var threadSeq = new SequenceHelper(threadEnv.Crypto);
+
                             // Generate reverse sequence
-                            var reverseSequence = GenerateReverseSequence(localEnv.Crypto, sequence);
+                            var reverseSequence = GenerateReverseSequence(threadEnv.Crypto, sequence);
 
                             // Apply forward and reverse transformations
-                            var encrypted = localEnv.Crypto.Encrypt(sequence, localEnv.Globals.Input);
-                            var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
+                            var encrypted = threadEnv.Crypto.Encrypt(sequence, threadEnv.Globals.Input);
+                            var payload = threadEnv.Crypto.GetPayloadOnly(encrypted);
 
-                            var decrypted = localEnv.Crypto.Decrypt(reverseSequence, encrypted);
+                            var decrypted = threadEnv.Crypto.Decrypt(reverseSequence, encrypted);
 
                             // Modify a copy of input for Avalanche test and Key Dependency test
                             var (MangoAvalanchePayload, _, MangoKeyDependencyPayload, _) =
                                 ProcessAvalancheAndKeyDependency(
-                                    localEnv,
+                                    threadEnv,
                                     GlobalsInstance.Password,
                                     sequence.ToList());
 
                             // Check reversibility
-                            var isReversible = decrypted.SequenceEqual(localEnv.Globals.Input);
+                            var isReversible = decrypted.SequenceEqual(threadEnv.Globals.Input);
 
                             if (isReversible)
                             {
-                                var analysisResults = localEnv.CryptoAnalysis.RunCryptAnalysis(
+                                var analysisResults = threadEnv.CryptoAnalysis.RunCryptAnalysis(
                                     payload,
                                     MangoAvalanchePayload,
                                     MangoKeyDependencyPayload,
-                                    localEnv.Globals.Input);
+                                    threadEnv.Globals.Input);
 
                                 // Always enqueue results, sequence, and log text
                                 analysisQueue.Enqueue((analysisResults, sequence.ToList(), LogType.Informational,
-                                    $"Reversible sequence found: {new SequenceHelper(localEnv.Crypto).FormattedSequence(sequence, SequenceFormat.ID | SequenceFormat.TRounds)}"));
+                                    $"Reversible sequence found: {threadSeq.FormattedSequence(sequence, SequenceFormat.ID | SequenceFormat.TRounds)}"));
                             }
                             else
                             {
                                 // Queue failure messages with sequence and type
                                 analysisQueue.Enqueue((null, sequence.ToList(), LogType.Error,
-                                    $"Sequence failed: {new SequenceHelper(localEnv.Crypto).FormattedSequence(sequence, SequenceFormat.ID | SequenceFormat.TRounds)}")!);
+                                    $"Sequence failed: {threadSeq.FormattedSequence(sequence, SequenceFormat.ID | SequenceFormat.TRounds)}")!);
                             }
                         }
                         finally
@@ -985,8 +989,8 @@ public partial class Handlers
                     tasks.Add(task);
 
                     // not sure FlushThreshold is the right measure here
-                    if (analysisQueue.Count > localEnv.Globals.FlushThreshold)
-                        FlushAnalysisQueue(localEnv, analysisQueue, failureKey);
+                    if (analysisQueue.Count > parentEnv.Globals.FlushThreshold)
+                        FlushAnalysisQueue(parentEnv, analysisQueue, failureKey);
 
                     // Periodically report progress
                     if (++loopCounter % 20000 == 0)
@@ -1006,7 +1010,7 @@ public partial class Handlers
                         var estimatedTimeRemaining = TimeSpan.FromMilliseconds(totalRemainingMs);
 
                         // 🔴 If in database creation mode, print a warning in RED
-                        if (localEnv.Globals.CreateMungeFailDB && false)
+                        if (parentEnv.Globals.CreateMungeFailDB && false)
                             ColorConsole.WriteLine(
                                 "<Red>[NOTE] Running in Database Creation Mode - All failures will be recorded!</Red>");
 
@@ -1024,9 +1028,9 @@ public partial class Handlers
                         nextSnapshotTime = DateTime.UtcNow.AddHours(1);
 
                         // Lightweight trim-only-for-save
-                        var snapshotContenders = localEnv.CryptoAnalysis.Contenders
+                        var snapshotContenders = parentEnv.CryptoAnalysis.Contenders
                             .OrderByDescending(x => x.AggregateScore)
-                            .Take(localEnv.Globals.DesiredContenders)
+                            .Take(parentEnv.Globals.DesiredContenders)
                             .ToList();
 
                         // 💾 Save progress periodically using the MaxSequenceLen-specific resume file.
@@ -1035,35 +1039,35 @@ public partial class Handlers
                         // ➤ Allows seamless resume across sessions, without clobbering L4 or other configurations.
                         // ✅ Keeps save/restore behavior consistent and isolated by Munge level umbrella.
                         MungeStatePersistence.SaveMungeState(snapshotContenders, length, transforms.ToArray(), sequence,
-                            GetStateFilename(localEnv, localEnv.Globals.MaxSequenceLen));
+                            GetStateFilename(parentEnv, parentEnv.Globals.MaxSequenceLen));
 
                         ColorConsole.WriteLine($"<Yellow>[Snapshot]</Yellow> Munge state saved at {DateTime.Now:t}");
                     }
                 }
 
                 Task.WaitAll(tasks.ToArray()); // Wait for all tasks to complete
-                FlushAnalysisQueue(localEnv, analysisQueue, failureKey); // Final flush for the current length
+                FlushAnalysisQueue(parentEnv, analysisQueue, failureKey); // Final flush for the current length
             }
 
             // Process and flush the analysis queue
-            FlushAnalysisQueue(localEnv, analysisQueue, failureKey); // Final flush after all lengths
+            FlushAnalysisQueue(parentEnv, analysisQueue, failureKey); // Final flush after all lengths
 
-            var logFileName = GetContenderFilename(localEnv, length);
+            var logFileName = GetContenderFilename(parentEnv, length);
 
-            localEnv.CryptoAnalysis.LogToFile(localEnv, logFileName, localEnv.Globals.DesiredContenders);
+            parentEnv.CryptoAnalysis.LogToFile(parentEnv, logFileName, parentEnv.Globals.DesiredContenders);
 
-            LogIfEnabled(localEnv, DebugFlags.StatusMessage,
+            LogIfEnabled(parentEnv, DebugFlags.StatusMessage,
                 $"<Green>Completed length</Green> {length} <Green>in</Green> {DateTime.UtcNow - startTime:g}",
                 length);
         }
 
-        if (!localEnv.Globals.ExitJobComplete && !localEnv.Globals.BatchMode)
+        if (!parentEnv.Globals.ExitJobComplete && !parentEnv.Globals.BatchMode)
         {
             Console.WriteLine("\nPress any key to return to the main menu...");
             Console.ReadKey();
         }
 
-        return ($"RunMunge completed for max length {localEnv.Globals.MaxSequenceLen}.", ConsoleColor.Green);
+        return ($"RunMunge completed for max length {parentEnv.Globals.MaxSequenceLen}.", ConsoleColor.Green);
     }
 
     private static (string, ConsoleColor) MungeKCore(ExecutionEnvironment localEnv, string functionName,
@@ -1719,7 +1723,7 @@ public partial class Handlers
                                 ResetTransformRounds(threadEnv.Crypto, currentSequence.ToArray());
                             } // End GlobalRounds loop
 
-                            permutation_done: ; // 7. Corrected goto label
+                        permutation_done:; // 7. Corrected goto label
                         }
                         catch (Exception ex)
                         {
@@ -2393,7 +2397,8 @@ public partial class Handlers
         public int? ExitCount { get; } // 🔹 how many contenders will we process?
 
         public byte[]?
-            ReferenceSequence { get; } // 🔹 when using munge output directly, we need to infer the reference sequence
+            ReferenceSequence
+        { get; } // 🔹 when using munge output directly, we need to infer the reference sequence
 
         public ParamPack(string extension, string functionName, int? sequenceLength = null, int? exitCount = null,
             bool reorder = false, bool useCuratedTransforms = false, int topContenders = 0,

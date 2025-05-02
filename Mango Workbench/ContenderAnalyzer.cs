@@ -165,5 +165,6 @@ public class FileMetricsSummary
     public string FileName { get; set; } = null!;
 
     public required Dictionary<string, (int PassCount, int TotalCount, List<string> Passers, List<string> Failers)>
-        MetricsSummary { get; set; }
+        MetricsSummary
+    { get; set; }
 }

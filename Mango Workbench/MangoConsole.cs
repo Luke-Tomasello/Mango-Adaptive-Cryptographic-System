@@ -690,7 +690,7 @@ public static class MangoConsole
                 Console.WriteLine(); // emulate user has hit return after the command
             }
             else
-                //userInput = Console.ReadLine()?.Trim();
+            //userInput = Console.ReadLine()?.Trim();
             {
                 userInput = ReadConsoleBlock()?.Trim();
             }

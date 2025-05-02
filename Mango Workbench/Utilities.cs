@@ -339,9 +339,9 @@ public partial class CutListHelper
     private static void ValidateAndFinalizeCutList()
     {
         foreach (var entry in _cutMatrixCache)
-        foreach (var idEntry in entry.Value)
-            if (idEntry.Value.Length != 4)
-                throw new Exception($"Invalid data length for TransformId {idEntry.Key} in key {entry.Key}");
+            foreach (var idEntry in entry.Value)
+                if (idEntry.Value.Length != 4)
+                    throw new Exception($"Invalid data length for TransformId {idEntry.Key} in key {entry.Key}");
 
         messages.Add("✅ All cutlist fields validated.");
         return;
@@ -2062,11 +2062,11 @@ public class GlobalsInstance
 
             case "mode":
                 if (value is OperationModes parsedMode)
-                    //if (_cryptoLib.Options == null)
-                    //{
-                    //    throw new InvalidOperationException("CryptoLib.Options is null. Ensure it is properly initialized before setting Mode.");
-                    //}
-                    //else
+                //if (_cryptoLib.Options == null)
+                //{
+                //    throw new InvalidOperationException("CryptoLib.Options is null. Ensure it is properly initialized before setting Mode.");
+                //}
+                //else
                 {
                     _localEnv.Globals.Mode = parsedMode;
                     MetricInfoHelper.AdjustWeights(_localEnv, parsedMode); // Adjust weights if necessary
@@ -3031,7 +3031,7 @@ public static class UtilityHelpers
 
         return settings;
     }
-   
+
     /// <summary>
     /// Retrieves matching Munge result files based on user-specified parameters.
     ///
@@ -3218,16 +3218,16 @@ public static class UtilityHelpers
 
         // ✅ Validate all files against the reference values
         foreach (var file in files)
-        foreach (var flag in requiredFlags)
-        {
-            var detectedValue = ExtractFlagValue(file, flag);
-            if (!string.Equals(detectedValue, seedValues[flag], StringComparison.OrdinalIgnoreCase))
+            foreach (var flag in requiredFlags)
             {
-                message =
-                    $"❌ Inconsistent `{flag}` values detected! Expected: {seedValues[flag]} but found: {detectedValue} in file: {file}";
-                return false;
+                var detectedValue = ExtractFlagValue(file, flag);
+                if (!string.Equals(detectedValue, seedValues[flag], StringComparison.OrdinalIgnoreCase))
+                {
+                    message =
+                        $"❌ Inconsistent `{flag}` values detected! Expected: {seedValues[flag]} but found: {detectedValue} in file: {file}";
+                    return false;
+                }
             }
-        }
 
         return true; // ✅ All checks passed
     }
@@ -3864,14 +3864,14 @@ public static class UtilityHelpers
         for (var j = 0; j <= t.Length; j++) dp[0, j] = j;
 
         for (var i = 1; i <= s.Length; i++)
-        for (var j = 1; j <= t.Length; j++)
-        {
-            var cost = s[i - 1] == t[j - 1] ? 0 : 1;
-            dp[i, j] = Math.Min(
-                Math.Min(dp[i - 1, j] + 1, dp[i, j - 1] + 1),
-                dp[i - 1, j - 1] + cost
-            );
-        }
+            for (var j = 1; j <= t.Length; j++)
+            {
+                var cost = s[i - 1] == t[j - 1] ? 0 : 1;
+                dp[i, j] = Math.Min(
+                    Math.Min(dp[i - 1, j] + 1, dp[i, j - 1] + 1),
+                    dp[i - 1, j - 1] + cost
+                );
+            }
 
         return dp[s.Length, t.Length];
     }
@@ -4063,14 +4063,14 @@ public static class UtilityHelpers
             List<byte> transforms, int transformsToAdd)
         {
             foreach (var metaSequence in metaSequences)
-            foreach (var transformCombination in GenerateCombinations(transforms, transformsToAdd))
-            {
-                // Append transform combination
-                yield return metaSequence.Concat(transformCombination).ToArray();
+                foreach (var transformCombination in GenerateCombinations(transforms, transformsToAdd))
+                {
+                    // Append transform combination
+                    yield return metaSequence.Concat(transformCombination).ToArray();
 
-                // Prepend transform combination
-                yield return transformCombination.Concat(metaSequence).ToArray();
-            }
+                    // Prepend transform combination
+                    yield return transformCombination.Concat(metaSequence).ToArray();
+                }
         }
 
         private static IEnumerable<List<byte>> GenerateCombinations(List<byte> transforms, int length)
@@ -4082,8 +4082,8 @@ public static class UtilityHelpers
             }
 
             foreach (var transform in transforms)
-            foreach (var combination in GenerateCombinations(transforms, length - 1))
-                yield return new List<byte> { transform }.Concat(combination).ToList();
+                foreach (var combination in GenerateCombinations(transforms, length - 1))
+                    yield return new List<byte> { transform }.Concat(combination).ToList();
         }
 
         public static int CountMetaPermutations(List<byte[]> metaSequences, List<byte> transforms, int transformsToAdd)
@@ -4241,17 +4241,17 @@ public static class UtilityHelpers
             for (var i = 0; i < numDistinctItems; i++)
                 //Consider adding 1 element of 'i', and recursively call
                 //Calculate number of permutations if this item is choosen up to 'repetition' times
-            for (var rep = 1; rep <= repetitions; rep++)
-                if (remainingLength - rep >= 0)
-                    //If we add 'rep' instances of this element, there will be 'remainingLength - rep'
-                    //positions left.
-                    // How many ways can we place those elements?
-                    // We need to pick 'rep' positions from 'remainingLength', which is a combinations problem.
-                    // We also need to multiply by the number of permutations for the remainingLength
-                    // and for each *other* item, up to 'repititions'
-                    count += Combinations(remainingLength, rep) *
-                             CountPermutationsRecursive(numDistinctItems - 1, remainingLength - rep,
-                                 repetitions);
+                for (var rep = 1; rep <= repetitions; rep++)
+                    if (remainingLength - rep >= 0)
+                        //If we add 'rep' instances of this element, there will be 'remainingLength - rep'
+                        //positions left.
+                        // How many ways can we place those elements?
+                        // We need to pick 'rep' positions from 'remainingLength', which is a combinations problem.
+                        // We also need to multiply by the number of permutations for the remainingLength
+                        // and for each *other* item, up to 'repititions'
+                        count += Combinations(remainingLength, rep) *
+                                 CountPermutationsRecursive(numDistinctItems - 1, remainingLength - rep,
+                                     repetitions);
 
             return count;
         }
@@ -4283,8 +4283,8 @@ public static class UtilityHelpers
     {
         var permutations = GenerateLimitedRepetitionSequences(userSequence, sequenceLength, repetitions);
         foreach (var permutation in permutations)
-        foreach (var roundConfig in GenerateRoundCombinations(permutation.Count()))
-            yield return new SequenceRoundConfig(permutation.ToList(), roundConfig);
+            foreach (var roundConfig in GenerateRoundCombinations(permutation.Count()))
+                yield return new SequenceRoundConfig(permutation.ToList(), roundConfig);
     }
 
     private const int MaxRounds = 9; // 🔥 Easily adjustable for future experiments
