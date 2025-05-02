@@ -3,7 +3,9 @@
     "batch optimize sequences -L5",
     "$MaskBasedSBoxFwdTx -> MaskBasedSBoxInvTx -> BitFlipButterflyFwdTx -> ChunkedFbTx",
     "run sequence",
-    "run munge"
+    "run munge",
+    "run regression tests",
+    "eixt"
   ],
   "Sequences": []
 }
