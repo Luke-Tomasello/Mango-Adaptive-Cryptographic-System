@@ -28,6 +28,7 @@ using Mango.Cipher;
 using Mango.Utilities;
 using Newtonsoft.Json;
 using System.Text.RegularExpressions;
+using static Mango.Cipher.CryptoLib;
 using static Mango.Utilities.SequenceHelper;
 using static Mango.Utilities.TestInputGenerator;
 using static Mango.Utilities.UtilityHelpers;
@@ -733,6 +734,33 @@ public static class MangoConsole
             }
 
             // Process input
+#if true
+            if (int.TryParse(userInput, out var selectedOption))
+            {
+                if (MenuOptionMap.TryGetValue(selectedOption, out var transform))
+                {
+                    var formattedTransform = transform.Rounds > 1
+                        ? $"{transform.Name}(ID:{transform.Id})(TR:{transform.Rounds})"
+                        : $"{transform.Name}(ID:{transform.Id})";
+
+                    var grIndex = sequence.FindIndex(s => s.StartsWith("(GR:"));
+                    if (grIndex >= 0)
+                        sequence.Insert(grIndex, formattedTransform);
+                    else
+                        sequence.Add(formattedTransform);
+
+                    statusMessage = $"{transform.Name} Transform added to sequence.";
+                    statusColor = ConsoleColor.Green;
+                }
+                else
+                {
+                    Console.Beep();
+                    statusMessage = "Invalid menu option.";
+                    statusColor = ConsoleColor.Red;
+                }
+            }
+
+#else
             if (int.TryParse(userInput, out var selectedOption))
             {
                 // Handle menu selection
@@ -775,7 +803,7 @@ public static class MangoConsole
                     statusColor = ConsoleColor.Red;
                 }
             }
-
+#endif
             else if (userInput.StartsWith("$"))
             {
                 // ✅ Handle sequence paste operator
@@ -871,6 +899,56 @@ public static class MangoConsole
     }
 
     // Dynamically builds and displays the menu of transforms.
+#if true
+    private static readonly Dictionary<int, TransformInfo> MenuOptionMap = new();
+
+    public static void DisplayMenu(ExecutionEnvironment localEnv, List<string> sequence)
+    {
+        ColorConsole.WriteLine($"\n===== Mango Console <green>[{localEnv.Globals.Mode}]</green> =====\n");
+
+        var transforms = localEnv.Crypto.TransformRegistry.Values
+            .OrderBy(t => t.Id)
+            .ToList();
+
+        // Determine max name length for alignment
+        int maxNameLength = transforms.Max(t => t.Name.Length);
+        string leftColor = "<cyan>";
+        string rightColor = "<yellow>";
+        string colorEnd = "</>";
+
+        int menuIndex = 1;
+        var printedIds = new HashSet<int>();
+
+        foreach (var forward in transforms)
+        {
+            // Skip if already printed or not a forward transform
+            if (printedIds.Contains(forward.Id) || forward.Id > forward.InverseId)
+                continue;
+
+            // Format forward side
+            int leftPadding = maxNameLength + 4;
+            string paddedLeft = $"{menuIndex,2}. Add {leftColor}{forward.Name.PadRight(leftPadding)}{colorEnd}";
+            int leftIndex = menuIndex++;
+            printedIds.Add(forward.Id);
+
+            // Format inverse (if applicable)
+            string rightText = string.Empty;
+            var inverse = transforms.FirstOrDefault(t => t.Id == forward.InverseId && t.Id != forward.Id);
+
+            if (inverse != null && !printedIds.Contains(inverse.Id))
+            {
+                rightText = $"{menuIndex,2}. Add {rightColor}{inverse.Name.PadRight(leftPadding)}{colorEnd}";
+                printedIds.Add(inverse.Id);
+                menuIndex++;
+            }
+
+            ColorConsole.WriteLine($"{paddedLeft} {rightText}");
+        }
+    }
+
+
+
+#else
     public static void DisplayMenu(ExecutionEnvironment localEnv, List<string> sequence)
     {
         ColorConsole.WriteLine($"\n===== Mango Console <green>[{localEnv.Globals.Mode}]</green> =====\n");
@@ -884,7 +962,7 @@ public static class MangoConsole
                 optionNumber++;
             }
     }
-
+#endif
     public static int GetMenuOrdinal(CryptoLib cryptoLib, byte transformId)
     {
         var ordinal = 1;
