@@ -4492,11 +4492,11 @@ public static class UtilityHelpers
                 totalTime += timePerOp;
 
                 var result =
-                    $"Transform: {transform.Name} (ID: {transformId}) | Avg time per op: {timePerOp:F4} ms";
+                    $"Transform: {transform.Name} (Id: {transformId}) | Avg time per op: {timePerOp:F4} ms";
                 results.Add(result);
                 Console.WriteLine(result);
 
-                jsonResults.Add(new { Name = transform.Name, ID = transformId, TimePerOpMs = timePerOp });
+                jsonResults.Add(new { Name = transform.Name, Id = transformId, TimePerOpMs = timePerOp });
             }
         }
 
