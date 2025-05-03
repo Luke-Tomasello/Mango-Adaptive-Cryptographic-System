@@ -734,7 +734,6 @@ public static class MangoConsole
             }
 
             // Process input
-#if true
             if (int.TryParse(userInput, out var selectedOption))
             {
                 if (MenuOptionMap.TryGetValue(selectedOption, out var transform))
@@ -760,50 +759,6 @@ public static class MangoConsole
                 }
             }
 
-#else
-            if (int.TryParse(userInput, out var selectedOption))
-            {
-                // Handle menu selection
-                var optionNumber = 1;
-                var validSelection = false;
-
-                foreach (var transform in localEnv.Crypto.TransformRegistry.Values)
-                    if (transform.Id <= transform.InverseId) // Only add forward transforms
-                    {
-                        if (optionNumber == selectedOption)
-                        {
-                            // ✅ Format transform with (ID:N), and optionally (TR:N) if TRounds > 1
-                            var formattedTransform = transform.Rounds > 1
-                                ? $"{transform.Name}(ID:{transform.Id})(TR:{transform.Rounds})"
-                                : $"{transform.Name}(ID:{transform.Id})";
-
-                            // ✅ Find the (GR:X) entry if it exists
-                            var grIndex = sequence.FindIndex(s => s.StartsWith("(GR:"));
-
-                            // ✅ Insert before GR if present, otherwise append at the end
-                            if (grIndex >= 0)
-                                sequence.Insert(grIndex, formattedTransform);
-                            else
-                                sequence.Add(formattedTransform);
-
-                            statusMessage = $"{transform.Name} Transform added to sequence.";
-                            statusColor = ConsoleColor.Green;
-                            validSelection = true;
-                            break;
-                        }
-
-                        optionNumber++;
-                    }
-
-
-                if (!validSelection)
-                {
-                    Console.Beep();
-                    statusMessage = "Invalid menu option.";
-                    statusColor = ConsoleColor.Red;
-                }
-            }
-#endif
             else if (userInput.StartsWith("$"))
             {
                 // ✅ Handle sequence paste operator
@@ -899,9 +854,7 @@ public static class MangoConsole
     }
 
     // Dynamically builds and displays the menu of transforms.
-#if true
     private static readonly Dictionary<int, TransformInfo> MenuOptionMap = new();
-
     public static void DisplayMenu(ExecutionEnvironment localEnv, List<string> sequence)
     {
         ColorConsole.WriteLine($"\n===== Mango Console <green>[{localEnv.Globals.Mode}]</green> =====\n");
@@ -953,21 +906,7 @@ public static class MangoConsole
 
 
 
-#else
-    public static void DisplayMenu(ExecutionEnvironment localEnv, List<string> sequence)
-    {
-        ColorConsole.WriteLine($"\n===== Mango Console <green>[{localEnv.Globals.Mode}]</green> =====\n");
 
-        var optionNumber = 1;
-        foreach (var transform in localEnv.Crypto.TransformRegistry.Values)
-            // Include only forward transforms in the menu
-            if (transform.Id <= transform.InverseId)
-            {
-                Console.WriteLine($"{optionNumber}. Add {transform.Name} Transform");
-                optionNumber++;
-            }
-    }
-#endif
     public static int GetMenuOrdinal(CryptoLib cryptoLib, byte transformId)
     {
         var ordinal = 1;
