@@ -41,6 +41,7 @@ public static class RegressionTests
         RunTest(DataEvaluatorClassificationTest, localEnv, "Data Classification Test");
         RunTest(TransformReversibilityTest, localEnv, "Transform Reversibility Test");
         RunTest(_ => ValidateBlockModeRoundtrip(), localEnv, "Block Mode Roundtrip Test");
+        RunTest(SmallBlockTest, localEnv, "Small Block Test");
     }
 
     private static void RunTest(Action<ExecutionEnvironment> testFunc, ExecutionEnvironment localEnv, string testName)
@@ -52,6 +53,87 @@ public static class RegressionTests
         catch (Exception ex)
         {
             throw new Exception($"❌ Regression test failed: {testName} — {ex.Message}", ex);
+        }
+    }
+
+    // 🔹 Regression Test: Validate Transform Robustness on Small Buffers
+    //
+    // ✅ Loops over input sizes from 1 to 5 bytes
+    // ✅ For each built-in InputType (Sequence, Random, Natural, Combined)
+    // ✅ Profiles input to get adaptive sequence and rounds (god-sequence)
+    // ✅ Encrypts/decrypts and ensures correct roundtrip behavior
+    //
+    // ✅ Separately iterates every transform (excluding ExcludeFromPermutations)
+    // ✅ Applies each transform alone, then its inverse, to inputs of size 1–5
+    // ✅ Confirms transform modifies data (if applicable) and roundtrips successfully
+    //
+    // 🔥 This test ensures every transform in Mango handles tiny inputs safely.
+    //    If this fails, it likely indicates incorrect length assumptions, padding logic,
+    //    or unsafe buffer access inside a transform.
+    private static void SmallBlockTest(ExecutionEnvironment localEnv)
+    {
+        var builtInTypes = new Dictionary<InputType, string>
+    {
+        { InputType.Sequence, "Sequence" },
+        { InputType.Random, "Random" },
+        { InputType.Natural, "Natural" },
+        { InputType.Combined, "Combined" }
+    };
+
+        // ✅ PHASE 1: Test God-sequence profiles on small blocks
+        foreach (var (inputType, _) in builtInTypes)
+            using (new LocalEnvironment(localEnv))
+            {
+                localEnv.Globals.UpdateSetting("InputType", inputType);
+                var fullInput = localEnv.Globals.Input;
+
+                var profile = InputProfiler.GetInputProfile(fullInput);
+
+                for (int len = 1; len <= 5; len++)
+                {
+                    var testInput = fullInput.Take(len).ToArray();
+
+                    var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, testInput);
+                    if (encrypted.SequenceEqual(testInput))
+                        throw new Exception($"[GodSeq] Encryption failed to alter buffer (InputType={inputType}, len={len})");
+
+                    var decrypted = localEnv.Crypto.Decrypt(encrypted);
+                    if (!decrypted.SequenceEqual(testInput))
+                        throw new Exception($"[GodSeq] Decryption failed (InputType={inputType}, len={len})");
+                }
+            }
+
+        // 🧪 PHASE 2: Individually test all transforms on 1–5 byte inputs
+        var referenceInput = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray(); // Common base data
+        var registry = localEnv.Crypto.TransformRegistry;
+
+        foreach (var kvp in registry)
+        {
+            var id = (byte)kvp.Key;
+            var transform = kvp.Value;
+
+            if (transform.ExcludeFromPermutations)
+                continue; // Skip known no-ops like PassthroughTx
+
+            var inverseId = (byte)transform.InverseId;
+
+            for (int len = 1; len <= 5; len++)
+            {
+                using (new LocalEnvironment(localEnv))
+                {
+                    var testInput = referenceInput.Take(len).ToArray();
+
+                    var encrypted = localEnv.Crypto.Encrypt(new[] { id }, testInput);
+
+                    if (id != inverseId && encrypted.SequenceEqual(testInput))
+                        throw new Exception($"[SingleTx] ID:{id} ({transform.Name}) failed to alter input (len={len})");
+
+                    var decrypted = localEnv.Crypto.Decrypt(new[] { inverseId }, encrypted);
+
+                    if (!decrypted.SequenceEqual(testInput))
+                        throw new Exception($"[SingleTx] ID:{id} ({transform.Name}) failed round-trip (len={len})");
+                }
+            }
         }
     }
 
