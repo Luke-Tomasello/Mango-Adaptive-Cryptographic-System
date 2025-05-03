@@ -4,7 +4,8 @@
     "$MaskBasedSBoxFwdTx -> MaskBasedSBoxInvTx -> BitFlipButterflyFwdTx -> ChunkedFbTx",
     "run sequence",
     "run munge",
-    "run regression tests"
+    "run regression tests",
+    "run benchmark transforms"
   ],
   "Sequences": []
 }
