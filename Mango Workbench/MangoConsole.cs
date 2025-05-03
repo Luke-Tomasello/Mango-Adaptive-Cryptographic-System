@@ -910,7 +910,9 @@ public static class MangoConsole
             .OrderBy(t => t.Id)
             .ToList();
 
-        // Determine max name length for alignment
+        // Clear existing map
+        MenuOptionMap.Clear();
+
         int maxNameLength = transforms.Max(t => t.Name.Length);
         string leftColor = "<cyan>";
         string rightColor = "<yellow>";
@@ -921,23 +923,25 @@ public static class MangoConsole
 
         foreach (var forward in transforms)
         {
-            // Skip if already printed or not a forward transform
             if (printedIds.Contains(forward.Id) || forward.Id > forward.InverseId)
                 continue;
 
-            // Format forward side
             int leftPadding = maxNameLength + 4;
             string paddedLeft = $"{menuIndex,2}. Add {leftColor}{forward.Name.PadRight(leftPadding)}{colorEnd}";
-            int leftIndex = menuIndex++;
-            printedIds.Add(forward.Id);
 
-            // Format inverse (if applicable)
+            // 🟩 Add forward to map
+            MenuOptionMap[menuIndex] = forward;
+            printedIds.Add(forward.Id);
+            int leftIndex = menuIndex++;
+
+            // Try to find the inverse
             string rightText = string.Empty;
             var inverse = transforms.FirstOrDefault(t => t.Id == forward.InverseId && t.Id != forward.Id);
 
             if (inverse != null && !printedIds.Contains(inverse.Id))
             {
                 rightText = $"{menuIndex,2}. Add {rightColor}{inverse.Name.PadRight(leftPadding)}{colorEnd}";
+                MenuOptionMap[menuIndex] = inverse; // 🟨 Add inverse to map
                 printedIds.Add(inverse.Id);
                 menuIndex++;
             }
@@ -945,6 +949,7 @@ public static class MangoConsole
             ColorConsole.WriteLine($"{paddedLeft} {rightText}");
         }
     }
+
 
 
 
