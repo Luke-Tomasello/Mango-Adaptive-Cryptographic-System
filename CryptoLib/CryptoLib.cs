@@ -1513,11 +1513,13 @@ namespace Mango.Cipher
 
         private byte[] ApplyTransformationsRepeated(byte[] input, byte[] idSequence, byte[] coins, bool reverse, int rounds)
         {
-            var data = new byte[input.Length];
-            Array.Copy(input, data, input.Length);
-            //for (int i = 0; i < rounds; i++)
-            data = ApplyTransformations(idSequence, data, coins, reverse, rounds);
-            return data;
+            var buffer = ScratchBufferPool.Rent(input.Length);
+            Buffer.BlockCopy(input, 0, buffer, 0, input.Length);
+
+            var result = ApplyTransformations(idSequence, buffer, coins, reverse, rounds);
+
+            ScratchBufferPool.Return(buffer); // Safe to return after use
+            return result; // Result is a freshly allocated array
         }
 
 #if DEBUG
@@ -1817,65 +1819,68 @@ namespace Mango.Cipher
             {
                 // Step 1: Pad input to a block-aligned size using CBox bytes
                 int paddingNeeded = (blockSize - (input.Length % blockSize)) % blockSize;
-                workingBuffer = new byte[input.Length + paddingNeeded];
+                int paddedLength = input.Length + paddingNeeded;
 
+                workingBuffer = ScratchBufferPool.Rent(paddedLength);
                 Buffer.BlockCopy(input, 0, workingBuffer, 0, input.Length);
                 if (paddingNeeded > 0)
                     Buffer.BlockCopy(CBox, 0, workingBuffer, input.Length, paddingNeeded);
             }
             else
             {
-                // Step 1: Read and remove the trailing padding length byte
                 int padding = input[^1];
                 int bufferLength = input.Length - 1;
 
                 if (padding > bufferLength)
                     throw new InvalidOperationException("Invalid padding value.");
 
-                // Step 2: Apply transforms to the full padded region (excluding the bp byte)
-                workingBuffer = new byte[bufferLength];
+                workingBuffer = ScratchBufferPool.Rent(bufferLength);
                 Buffer.BlockCopy(input, 0, workingBuffer, 0, bufferLength);
             }
 
-            // Step 2 (forward) or Step 3 (reverse): Apply the transform sequence
-            for (int globalRound = 0; globalRound < globalRounds; globalRound++)
-                foreach (var transformId in sequence)
-                {
-                    if (!TransformRegistry.TryGetValue(transformId, out var transformInfo))
-                        throw new ApplicationException($"Unknown transformation ID: {transformId}");
-
-                    for (byte round = 0; round < transformInfo.Rounds; round++)
+            try
+            {
+                // Step 2 (forward) or Step 3 (reverse): Apply transform sequence
+                for (int globalRound = 0; globalRound < globalRounds; globalRound++)
+                    foreach (var transformId in sequence)
                     {
-                        var selectedCoin = SelectCoin(
-                            transformInfo.CoinPreference, round, reverse, transformInfo.Rounds);
+                        if (!TransformRegistry.TryGetValue(transformId, out var transformInfo))
+                            throw new ApplicationException($"Unknown transformation ID: {transformId}");
 
-                        transformInfo.Implementation!(workingBuffer, coins[selectedCoin]);
+                        for (byte round = 0; round < transformInfo.Rounds; round++)
+                        {
+                            var selectedCoin = SelectCoin(
+                                transformInfo.CoinPreference, round, reverse, transformInfo.Rounds);
+
+                            transformInfo.Implementation!(workingBuffer, coins[selectedCoin]);
+                        }
                     }
+
+                if (forward)
+                {
+                    int paddingNeeded = (blockSize - (input.Length % blockSize)) % blockSize;
+                    result = new byte[workingBuffer.Length + 1];
+                    Buffer.BlockCopy(workingBuffer, 0, result, 0, workingBuffer.Length);
+                    result[^1] = (byte)paddingNeeded;
+                }
+                else
+                {
+                    int padding = input[^1];
+                    int unpaddedLength = workingBuffer.Length - padding;
+
+                    if (unpaddedLength < 0)
+                        throw new InvalidOperationException("Padding length exceeds buffer size.");
+
+                    result = new byte[unpaddedLength];
+                    Buffer.BlockCopy(workingBuffer, 0, result, 0, unpaddedLength);
                 }
 
-            if (forward)
-            {
-                // Step 3: Append the padding length as a final byte
-                int paddingNeeded = (blockSize - (input.Length % blockSize)) % blockSize;
-
-                result = new byte[workingBuffer.Length + 1];
-                Buffer.BlockCopy(workingBuffer, 0, result, 0, workingBuffer.Length);
-                result[^1] = (byte)paddingNeeded;
+                return result;
             }
-            else
+            finally
             {
-                // Step 4: Strip the CBox padding after transforms
-                int padding = input[^1];
-                int unpaddedLength = workingBuffer.Length - padding;
-
-                if (unpaddedLength < 0)
-                    throw new InvalidOperationException("Padding length exceeds buffer size.");
-
-                result = new byte[unpaddedLength];
-                Buffer.BlockCopy(workingBuffer, 0, result, 0, unpaddedLength);
+                ScratchBufferPool.Return(workingBuffer);
             }
-
-            return result;
         }
 
         private void ApplyTransformRounds((byte ID, byte TR)[] sequence)
