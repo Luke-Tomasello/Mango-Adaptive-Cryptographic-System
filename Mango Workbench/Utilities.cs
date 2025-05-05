@@ -27,6 +27,7 @@ using Mango.Cipher;
 using Mango.Reporting;
 using Mango.Workbench;
 using System.Buffers.Binary;
+using System.ComponentModel.DataAnnotations;
 using System.Data.SQLite;
 using System.Diagnostics;
 using System.Reflection;
@@ -80,6 +81,7 @@ public partial class CutListHelper
     private static Dictionary<string, Dictionary<int, byte[]>> _cutMatrixCache = new();
     private string _key = null!;
     private int _activeDataIndex;
+    private const int NumDataTypes = 5; // DC, DN, DR, DS, DU
 
     public CutListHelper(string mungeFileName)
     {
@@ -113,7 +115,7 @@ public partial class CutListHelper
                 _cutMatrixCache[_key] = new Dictionary<int, byte[]>();
 
                 foreach (var (id, info) in _cryptoLib!.TransformRegistry)
-                    _cutMatrixCache[_key][id] = new byte[4] { 1, 1, 1, 1 }; // everything is VALID (uncut)
+                    _cutMatrixCache[_key][id] = Enumerable.Repeat((byte)1, NumDataTypes).ToArray(); // everything is VALID (uncut)
             }
         }
 
@@ -147,7 +149,7 @@ public partial class CutListHelper
         // 🔄 1. Load existing persistent cutlist (if any)
         LoadCutlistFromJson();
 
-        var searchPattern = "Contenders,-L?-P?-D?-MC-ST.txt";
+        var searchPattern = "Contenders,-L?-P?-D?-MC-SF.txt";
         var directoryPath = _where;
 
         var contenderFiles = Directory.GetFiles(directoryPath, searchPattern)
@@ -202,16 +204,11 @@ public partial class CutListHelper
     private int GetIndexFromFileName(string fileName)
     {
         var fileNameParts = Path.GetFileNameWithoutExtension(fileName).Split('-');
-        if (fileNameParts.Length < 4) throw new ArgumentException($"Invalid filename format: {fileName}");
+        if (fileNameParts.Length < 4)
+            throw new ArgumentException($"Invalid filename format: {fileName}");
 
-        return fileNameParts[3] switch
-        {
-            "DC" => 0,
-            "DN" => 1,
-            "DR" => 2,
-            "DS" => 3,
-            _ => throw new Exception($"Unknown DataType in file name: {fileNameParts[3]}")
-        };
+        var dataType = fileNameParts[3];
+        return GetDataIndex(dataType); // ✅ Reuse centralized mapping logic
     }
 
     private static void ProcessContenderFile(string file)
@@ -228,7 +225,7 @@ public partial class CutListHelper
                 _cutMatrixCache[key] = new Dictionary<int, byte[]>();
 
                 foreach (var (id, info) in _cryptoLib!.TransformRegistry)
-                    _cutMatrixCache[key][id] = new byte[4] { 0, 0, 0, 0 }; // default "cut"
+                    _cutMatrixCache[key][id] = new byte[NumDataTypes];  // default "cut"
             }
 
             var transformsInTopSequences = new HashSet<int>();
@@ -256,14 +253,7 @@ public partial class CutListHelper
 
             foreach (var id in _cryptoLib!.TransformRegistry.Keys)
             {
-                var dataIndex = dataType switch
-                {
-                    "DC" => 0,
-                    "DN" => 1,
-                    "DR" => 2,
-                    "DS" => 3,
-                    _ => throw new Exception($"Unknown DataType: {dataType}")
-                };
+                var dataIndex = GetDataIndex(dataType);
 
                 var usedInTop10 = transformsInTopSequences.Contains(id);
                 _cutMatrixCache[key][id][dataIndex] = usedInTop10 ? (byte)0x01 : (byte)0x00;
@@ -276,12 +266,24 @@ public partial class CutListHelper
             Console.WriteLine($"❌ Error processing file {file}: {ex.Message}");
         }
     }
+    private static int GetDataIndex(string dataType)
+    {
+        return dataType switch
+        {
+            "DC" => 0, // Combined
+            "DN" => 1, // Natural
+            "DR" => 2, // Random
+            "DS" => 3, // Sequence
+            "DU" => 4, // UserData (formerly Custom)
+            _ => throw new Exception($"Unknown DataType: {dataType}")
+        };
+    }
 
     private static void SanityCheck()
     {
         messages.Add("\n🔍 Running Sanity Check...");
 
-        var searchPattern = "Contenders,-L?-P?-D?-MC-ST.txt";
+        var searchPattern = "Contenders,-L?-P?-D?-MC-SF.txt";
         var directoryPath = _where;
 
         var contenderFiles = Directory.GetFiles(directoryPath, searchPattern)
@@ -317,14 +319,7 @@ public partial class CutListHelper
 
             foreach (var transformId in transformsInTopSequences)
             {
-                var dataIndex = dataType switch
-                {
-                    "DC" => 0,
-                    "DN" => 1,
-                    "DR" => 2,
-                    "DS" => 3,
-                    _ => throw new Exception($"Unknown DataType in file name: {dataType}")
-                };
+                var dataIndex = GetDataIndex(dataType); 
 
                 if (!_cutMatrixCache[key].ContainsKey(transformId) ||
                     _cutMatrixCache[key][transformId][dataIndex] != 0x01)
@@ -340,7 +335,7 @@ public partial class CutListHelper
     {
         foreach (var entry in _cutMatrixCache)
             foreach (var idEntry in entry.Value)
-                if (idEntry.Value.Length != 4)
+                if (idEntry.Value.Length != NumDataTypes)
                     throw new Exception($"Invalid data length for TransformId {idEntry.Key} in key {entry.Key}");
 
         messages.Add("✅ All cutlist fields validated.");
@@ -561,14 +556,7 @@ public partial class CutListHelper
         var key = GenerateCutListKey(contenderFileName);
         var dataType = GetDataTypeFromFileName(contenderFileName);
 
-        var dataIndex = dataType switch
-        {
-            "DC" => 0,
-            "DN" => 1,
-            "DR" => 2,
-            "DS" => 3,
-            _ => throw new Exception($"Unknown DataType in file name: {dataType}")
-        };
+        var dataIndex = GetDataIndex(dataType); 
 
         var inMemoryTransforms = new List<byte>();
 
@@ -1722,7 +1710,8 @@ public enum InputType
     Combined,
     Random,
     Sequence,
-    Natural
+    Natural,
+    UserData      // not tracked by InputProfiler.GetInputProfile()
 }
 
 // Updated Globals class to include the Mode setting
@@ -2030,7 +2019,6 @@ public class GlobalsInstance
         TriggerSpecialActions(key, convertedValue);
     }
 
-
     // Handles special triggers when specific global settings are changed
     private void TriggerSpecialActions(string key, object? value)
     {
@@ -2052,6 +2040,10 @@ public class GlobalsInstance
                         break;
                     case InputType.Sequence:
                         UpdateSetting("rounds", "5"); // verified 4/10/2025
+                        break;
+                    case InputType.UserData:
+                        // ✅ For user data, do not override the GlobalRounds.
+                        // The user is responsible for setting the desired round count manually.
                         break;
                     default:
                         throw new InvalidOperationException(
@@ -2407,7 +2399,134 @@ public class SequenceAttributesHandler
 }
 
 #endregion Sequence Attributes Handler
+#if true
+public static class TestInputGenerator
+{
+    private static readonly object _initLock = new();
+    private static bool _isInitialized = false;
 
+    private static byte[] _randomData = Array.Empty<byte>();
+    private static byte[] _naturalData = Array.Empty<byte>();
+    private static byte[] _sequenceData = Array.Empty<byte>();
+    private static byte[] _combinedData = Array.Empty<byte>();
+    private static byte[] _userData = Array.Empty<byte>();
+
+    public static void InitializeInputData()
+    {
+        lock (_initLock)
+        {
+            if (_isInitialized)
+                return;
+
+            var randoms_filename = "randoms.bin";
+            var natural_filename = "Frankenstein.bin";
+            var natural_source = "Frankenstein.txt";
+            var userData_filename = "userdata.bin";
+
+            // 🚀 Load or generate Random Data
+            if (!File.Exists(randoms_filename))
+            {
+                Console.WriteLine($"[WARN] {randoms_filename} not found. Generating new random data...");
+                _randomData = new byte[4096];
+                using (var rng = RandomNumberGenerator.Create())
+                {
+                    rng.GetBytes(_randomData);
+                }
+                File.WriteAllBytes(randoms_filename, _randomData);
+            }
+            else
+            {
+                _randomData = File.ReadAllBytes(randoms_filename);
+            }
+            ValidateBuffer(_randomData, 4096, randoms_filename);
+
+            // 🚀 Load or create Natural Data
+            if (!File.Exists(natural_filename))
+            {
+                if (!File.Exists(natural_source))
+                    throw new FileNotFoundException(
+                        $"❌ CRITICAL ERROR: {natural_source} not found. Cannot create {natural_filename}.");
+
+                var textContent = File.ReadAllText(natural_source);
+                _naturalData = Encoding.UTF8.GetBytes(textContent);
+                File.WriteAllBytes(natural_filename, _naturalData);
+            }
+            else
+            {
+                _naturalData = File.ReadAllBytes(natural_filename);
+            }
+            ValidateBuffer(_naturalData, 4096, natural_filename);
+
+            // 🚀 Generate Sequence Data
+            _sequenceData = Enumerable.Range(0, 4096).Select(i => (byte)i).ToArray();
+            ValidateBuffer(_sequenceData, 4096, "Sequence Data");
+
+            // 🚀 Generate Combined Data using equal thirds approach
+            var sliceSize = 4096 / 3;
+            var natural = _naturalData.Take(sliceSize);
+            var sequence = _sequenceData.Take(sliceSize);
+            var random = _randomData.Take(sliceSize);
+
+            _combinedData = natural.Concat(sequence).Concat(random).ToArray();
+            if (_combinedData.Length < 4096)
+                Array.Resize(ref _combinedData, 4096);
+            else if (_combinedData.Length > 4096)
+                _combinedData = _combinedData.Take(4096).ToArray();
+
+            // 🚀 Load user data if available
+            if (File.Exists(userData_filename))
+            {
+                _userData = File.ReadAllBytes(userData_filename);
+                ValidateBuffer(_userData, _userData.Length, userData_filename);
+            }
+
+            _isInitialized = true;
+        }
+    }
+
+    public static void InitializeUserData(byte[] buffer)
+    {
+        File.WriteAllBytes("userdata.bin", buffer);
+        _userData = buffer;
+    }
+
+    public static byte[] GenerateTestInput(int size, InputType type = InputType.Natural)
+    {
+        if (!_isInitialized)
+            throw new InvalidOperationException(
+                "❌ CRITICAL ERROR: Test input data has not been initialized. Call InitializeInputData() first.");
+
+        var sourceData = type switch
+        {
+            InputType.Random => _randomData,
+            InputType.Natural => _naturalData,
+            InputType.Sequence => _sequenceData,
+            InputType.Combined => _combinedData,
+            InputType.UserData => _userData,
+            _ => throw new ArgumentException($"❌ CRITICAL ERROR: Invalid input type specified: {type}")
+        };
+
+        ValidateBuffer(sourceData, size, $"Requested {type} Data");
+        return sourceData.Take(size).ToArray();
+    }
+
+    public static byte[] GenerateTestInput(ExecutionEnvironment localEnv)
+    {
+        int size = localEnv.Globals.InputType == InputType.UserData ? _userData.Length : 4096;
+        return GenerateTestInput(size, localEnv.Globals.InputType);
+    }
+
+    private static void ValidateBuffer(byte[] buffer, int expectedSize, string sourceName)
+    {
+        if (buffer == null || buffer.Length == 0)
+            throw new InvalidOperationException($"❌ CRITICAL ERROR: {sourceName} buffer is null or empty.");
+
+        if (buffer.Length < expectedSize)
+            throw new ArgumentException($"❌ CRITICAL ERROR: Requested size ({expectedSize}) exceeds available {sourceName} data ({buffer.Length}).");
+    }
+}
+
+#else
 public static class TestInputGenerator
 {
     private static readonly object _initLock = new();
@@ -2521,7 +2640,7 @@ public static class TestInputGenerator
                 $"❌ CRITICAL ERROR: Requested size ({expectedSize}) exceeds available {sourceName} data ({buffer.Length}).");
     }
 }
-
+#endif
 public static class MetricInfoHelper
 {
     private static readonly Dictionary<OperationModes, Dictionary<string, double>> modeWeights = new()
@@ -3036,11 +3155,11 @@ public static class UtilityHelpers
     /// Retrieves matching Munge result files based on user-specified parameters.
     ///
     /// 🧠 Flexible File Matching:
-    /// - Default pattern: `Contenders,-L4-P6-D?-MC-ST.txt`
+    /// - Default pattern: `Contenders,-L4-P6-D?-MC-SF.txt`
     /// - Arguments passed in (e.g., `-L5`, `-DN`, `-SF`) will dynamically replace components of the pattern.
     ///
     /// ✅ Examples:
-    /// - `-L5` → `Contenders,-L5-P6-D?-MC-ST.txt`
+    /// - `-L5` → `Contenders,-L5-P6-D?-MC-SF.txt`
     /// - `-L5 -P0 -DR -ME -SF` → `Contenders,-L5-P0-DR-ME-SF.txt`
     ///
     /// 🚨 The full resolved pattern is shown to the user before continuing.
@@ -3051,7 +3170,7 @@ public static class UtilityHelpers
     /// </summary>
     public static string[] GetMungeFiles(string[] args)
     {
-        var defaultPattern = "Contenders,-L4-P6-D?-MC-ST.txt";
+        var defaultPattern = "Contenders,-L4-P6-D?-MC-SF.txt";
         var resolvedPattern = defaultPattern;
 
         foreach (var arg in args)
@@ -3076,7 +3195,7 @@ public static class UtilityHelpers
     /// Retrieves the top contender sequences from Munge(A) output files and extracts a specified number of transforms.
     /// </summary>
     /// <param name="env">The execution environment containing cryptographic context.</param>
-    /// <param name="pattern">The file pattern to match contender files (e.g., "Contenders,-L4-P6-D?-MC-ST.txt").</param>
+    /// <param name="pattern">The file pattern to match contender files (e.g., "Contenders,-L4-P6-D?-MC-SF.txt").</param>
     /// <param name="contenders">The number of top contender sequences to retrieve.</param>
     /// <param name="transforms">The number of transforms to extract from each sequence (starting from the left).</param>
     /// <returns>A list of byte arrays, where each array represents a sequence of transform IDs.</returns>
@@ -3238,7 +3357,7 @@ public static class UtilityHelpers
         var index = filename.IndexOf(flag, StringComparison.OrdinalIgnoreCase);
         if (index == -1) return null; // Flag not found
 
-        // ✅ Extract the flag's value (e.g., "-DC", "-DN", "-ST", etc.)
+        // ✅ Extract the flag's value (e.g., "-DC", "-DN", "-SF", etc.)
         var start = index + flag.Length;
 
         // ✅ Iterate until we find a non-alphanumeric character
