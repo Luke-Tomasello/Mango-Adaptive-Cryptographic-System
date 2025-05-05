@@ -155,7 +155,7 @@ public partial class Handlers
             // - Reads the best sequences from L4 Munge results
             // - Extracts the first 4 transforms (ensuring full sequences are taken)
             // - Throws an error if the requested number of contenders or transforms cannot be satisfied
-            var metaPackages = GetTopContendersAsIDs(localEnv, "Contenders,-L4-P6-D?-MC-ST.txt", 1, 2);
+            var metaPackages = GetTopContendersAsIDs(localEnv, "Contenders,-L4-P6-D?-MC-SF.txt", 1, 2);
             using (var localStatEnvironment = new LocalEnvironment(localEnv))
             {
                 localEnv.Globals.MaxSequenceLen = 5;
@@ -194,7 +194,7 @@ public partial class Handlers
                 .ToList();
 
             // Base arguments (excluding -D).  We'll add -D in the loop.
-            string[] baseArgs = { "-L1", "-P0", "-MC", "-ST" };
+            string[] baseArgs = { "-L1", "-P0", "-MC", "-SF" };
 
             // The different -D values we want to try.
             string[] inputTypes = { "S", "N", "C", "R" };
@@ -1268,7 +1268,10 @@ public partial class Handlers
         parentEnv.CryptoAnalysis.Initialize();
 
         Console.WriteLine(
-            $"🚀 Running Best Fit Transform + Convergence Autotune (Multi-Threaded) [ExitCount = {exitCount}]...");
+            // exit count is currently disabled because we suspect we were missing out on some 'better' sequences.
+            //  better to take the time for a full BTR and be sure than to shirt-cycle the process and risk missing something.
+            //$"🚀 Running Best Fit Transform + Convergence Autotune (Multi-Threaded) [ExitCount = {exitCount}]...");
+            $"🚀 Running Best Fit Transform + Convergence Autotune (Multi-Threaded)...");
 
         if (userSequence.Count == 0)
             return new BestFitResult(
