@@ -1494,15 +1494,11 @@ namespace Mango.Cipher
             if (fullEncryptedBody.Length < 1)
                 throw new InvalidOperationException("Encrypted body too short after header.");
 
-            //// Step 4: Trim the final body padding byte (pb)
-            //int bodyPaddingByte = fullEncryptedBody[^1];
-            //var trimmedBody = fullEncryptedBody[..^1];
-
 #if DEBUG
             // ParseHeaderForDebug(decryptedHeader);
 #endif
 
-            // Step 5: Return [header || body] (50 + 4096)
+            // Step 5: Return [decrypted header || remaining encrypted body]
             return CombineArrays(decryptedHeader, fullEncryptedBody.ToArray());
         }
         static int GetPaddedLength(int length, int blockSize)
