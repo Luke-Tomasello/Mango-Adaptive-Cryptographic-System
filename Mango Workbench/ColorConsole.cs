@@ -72,27 +72,59 @@ public static class ColorConsole
             if (color.HasValue) PopColor();
         }
     }
+    
+    private static readonly HashSet<string> _validColorTags = Enum.GetNames(typeof(ConsoleColor))
+        .SelectMany(name => new[] { name.ToLower(), "/" + name.ToLower() })
+        .ToHashSet();
 
     private static void WriteInternal(string text, bool newline)
     {
-        var segments = ParseColorTags(text);
+        text = PreprocessForNonTags(text);
         var originalColor = Console.ForegroundColor;
-
-        foreach (var segment in segments)
-            if (segment.IsColored)
+        try
+        {
+            var segments = ParseColorTags(text);
+            foreach (var segment in segments)
             {
-                PushColor(segment.Color);
-                Console.Write(segment.Text);
-                PopColor();
-            }
-            else
-            {
-                Console.Write(segment.Text);
+                var processedText = PostprocessForNonTags(segment.Text);
+                if (segment.IsColored)
+                {
+                    PushColor(segment.Color);
+                    Console.Write(processedText);
+                    PopColor();
+                }
+                else
+                {
+                    Console.Write(processedText);
+                }
             }
 
-        if (newline) Console.WriteLine();
+            if (newline) Console.WriteLine();
+        }
+        finally
+        {
+            Console.ForegroundColor = originalColor;
+        }
+    }
 
-        Console.ForegroundColor = originalColor; // Restore original color
+    public static string PreprocessForNonTags(string text)
+    {
+        return Regex.Replace(text, "<(.*?)>", match =>
+        {
+            var tag = match.Groups[1].Value.ToLowerInvariant();
+
+            // Allow valid end tag
+            if (match.Value == "</>") return match.Value;
+
+            return _validColorTags.Contains(tag)
+                ? match.Value // valid color tag
+                : "\x01" + tag + "\x02"; // protect non-color tag
+        });
+    }
+
+    public static string PostprocessForNonTags(string text)
+    {
+        return text.Replace("\x01", "<").Replace("\x02", ">");
     }
 
     public static void PushColor(ConsoleColor color)
@@ -137,7 +169,6 @@ public static class ColorConsole
         return new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase);
     }
 
-#if true
     private static List<ColorSegment> ParseColorTags(string input)
     {
         var segments = new List<ColorSegment>();
@@ -194,55 +225,6 @@ public static class ColorConsole
         return segments;
     }
 
-#else
-        private static List<ColorSegment> ParseColorTags(string input)
-        {
-            var segments = new List<ColorSegment>();
-
-            // ✅ Extract all known console colors (Red, Green, Blue, etc.)
-            var colorNames = Enum.GetNames(typeof(ConsoleColor));
-
-            // ✅ Build regex pattern for explicit `<Color>` and `</Color>` wrapping
-            string colorPattern = string.Join("|", colorNames);
-            var tagRegex = new Regex($@"<(?'color'{colorPattern})>(?'text'.*?)<\/\k'color'>",
-                RegexOptions.IgnoreCase | RegexOptions.Singleline);
-
-
-            int lastIndex = 0;
-
-            foreach (Match match in tagRegex.Matches(input))
-            {
-                // ✅ Preserve any text before the match
-                if (match.Index > lastIndex)
-                {
-                    string preText = input.Substring(lastIndex, match.Index - lastIndex);
-                    segments.Add(new ColorSegment(preText, ConsoleColor.Gray)); // Default to Gray
-                }
-
-                // ✅ Extract color name and text inside the tag
-                string colorName = match.Groups["color"].Value;
-                string text = match.Groups["text"].Value;
-
-                if (Enum.TryParse(colorName, true, out ConsoleColor color))
-                {
-                    segments.Add(new ColorSegment(text, color));
-                }
-
-                // ✅ Update last processed index
-                lastIndex = match.Index + match.Length;
-            }
-
-            // ✅ Preserve any remaining text
-            if (lastIndex < input.Length)
-            {
-                string remainingText = input.Substring(lastIndex);
-                segments.Add(new ColorSegment(remainingText, ConsoleColor.Gray));
-            }
-
-            return segments;
-        }
-
-#endif
     private class ColorSegment
     {
         public string Text { get; }
