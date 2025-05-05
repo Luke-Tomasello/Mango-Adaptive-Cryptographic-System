@@ -295,7 +295,7 @@ public static class RegressionTests
 
     // 🔹 Full Regression Test: Mango Encryption Pipeline & Cryptanalysis Validation
     //
-    // ✅ Generates **4096-byte test inputs** from **Natural, Sequence, and Random** categories.
+    // ✅ Uses **4096-byte Combined test input**
     // ✅ Runs **encryption** using Mango's top-ranked sequence.
     // ✅ Extracts the **encrypted payload** (removing any metadata or headers).
     // ✅ Reconstructs the **inverse sequence** and runs **decryption**.
