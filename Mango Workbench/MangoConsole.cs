@@ -480,6 +480,11 @@ public static class MangoConsole
                         "run comparative throughput", experimental: false)
                 },
                 {
+                    "load user data",
+                    (args => LoadUserDataHandler(localEnv, args), 3, "Load a custom input file (up to 10MB) for encryption and analysis.",
+                        "load user data <file name> [-max bytes]", experimental: false)
+                },
+                {
                     "run MangoCipher",
                     (args => MangoCipherHandler(localEnv, args), 2, "Run the Mango cipher engine directly.",
                         "run MangoCipher", experimental: true)
