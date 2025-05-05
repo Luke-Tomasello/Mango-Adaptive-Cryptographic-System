@@ -224,6 +224,36 @@ public partial class Handlers
         {
             switch (key)
             {
+#if true
+                case "inputtype":
+                {
+                    var totalLength = localEnv.Globals.Input.Length;
+                    int fullChunks = totalLength / 4096;
+                    int remainder = totalLength % 4096;
+
+                    Console.WriteLine($"Input Type: {localEnv.Globals.InputType}");
+                    Console.WriteLine($"Input Size: {totalLength:N0} bytes ({fullChunks} full chunks of 4096)");
+
+                    for (int i = 0; i < fullChunks; i++)
+                    {
+                        var chunk = localEnv.Globals.Input.Skip(i * 4096).Take(4096).ToArray();
+                        var first16Bytes = string.Join(" ", chunk.Take(16).Select(b => b.ToString("X2")));
+                        Console.WriteLine($"Chunk {i + 1}: {first16Bytes}");
+                    }
+
+                    if (remainder > 0)
+                    {
+                        var lastChunk = localEnv.Globals.Input.Skip(fullChunks * 4096).ToArray();
+                        var first16Bytes = string.Join(" ", lastChunk.Take(16).Select(b => b.ToString("X2")));
+                        Console.WriteLine($"(Partial) Chunk {fullChunks + 1}: {first16Bytes} ({lastChunk.Length} bytes)");
+                    }
+
+                    Console.WriteLine("\nPress any key to return to the main menu...");
+                    Console.ReadKey();
+                    break;
+                }
+
+#else
                 case "inputtype":
                     if (localEnv.Globals.Input.Length % 4096 != 0)
                         return ("Input length must be a multiple of 4096 bytes.", ConsoleColor.Red);
@@ -243,7 +273,7 @@ public partial class Handlers
                     Console.WriteLine("\nPress any key to return to the main menu...");
                     Console.ReadKey();
                     break;
-
+#endif
                 case "weights":
                     {
                         if (localEnv.Globals.Mode == OperationModes.None)
@@ -526,6 +556,14 @@ public partial class Handlers
             // ✅ **Update the setting**
             var sequenceHandler = new SequenceAttributesHandler(localEnv);
             var convertedValue = sequenceHandler.ConvertValue(property.PropertyType, value);
+
+            // 🛡️ Guard: Prevent setting InputType = UserData unless UserData.bin exists
+            if (key.Equals("inputtype", StringComparison.OrdinalIgnoreCase) &&
+                value.Equals("userdata", StringComparison.OrdinalIgnoreCase) &&
+                !File.Exists("UserData.bin"))
+            {
+                return ("⚠️ Cannot switch to UserData input: UserData.bin not found. Use 'load user data <file>' to load your data first.", ConsoleColor.Yellow);
+            }
             localEnv.Globals.UpdateSetting(key, convertedValue);
 
             // ✅ immediat save
@@ -711,10 +749,56 @@ public partial class Handlers
         return ("Visualization completed successfully.", ConsoleColor.Green);
     }
 
+    public static (string, ConsoleColor) LoadUserDataHandler(ExecutionEnvironment localEnv, string[] args)
+    {
+        // 🔒 Cap to 10 MB
+        const int MaxAllowedBytes = 10 * 1024 * 1024;
+
+        if (args.Length == 0)
+            return ("❌ Please specify a file name.", ConsoleColor.Red);
+
+        // Parse arguments: filename (may contain spaces), optional -max <bytes>
+        string joined = string.Join(' ', args);
+        int maxBytes = MaxAllowedBytes;
+
+        // Look for optional "-max NNN" pattern
+        var maxMatch = Regex.Match(joined, @"-max\s+(\d+)", RegexOptions.IgnoreCase);
+        if (maxMatch.Success && int.TryParse(maxMatch.Groups[1].Value, out int parsedMax))
+            maxBytes = Math.Min(parsedMax, MaxAllowedBytes); // Enforce hard cap
+
+        // Remove -max section to isolate the filename
+        string cleaned = maxMatch.Success ? joined.Remove(maxMatch.Index).Trim() : joined.Trim();
+        string filename = cleaned.Trim('"');
+
+        if (!File.Exists(filename))
+            return ($"❌ Could not load \"{filename}\" — file not found.", ConsoleColor.Red);
+
+        try
+        {
+            byte[] bytesLoaded;
+            using (FileStream fs = File.OpenRead(filename))
+            {
+                int length = (int)Math.Min(fs.Length, maxBytes);
+                bytesLoaded = new byte[length];
+                int bytesRead = fs.Read(bytesLoaded, 0, length);
+                if (bytesRead < length)
+                    Array.Resize(ref bytesLoaded, bytesRead);
+            }
+
+            InitializeUserData(bytesLoaded);
+            localEnv.Globals.UpdateSetting("InputType", InputType.UserData);
+            return ($"✅ Loaded {bytesLoaded.Length:N0} bytes from \"{filename}\" as user data.", ConsoleColor.Green);
+        }
+        catch (Exception ex)
+        {
+            return ($"❌ Failed to load \"{filename}\": {ex.Message}", ConsoleColor.Red);
+        }
+    }
+
+
     #region ComparativeAnalysis
 
-    public static (string, ConsoleColor) RunComparativeAnalysisHandler(ExecutionEnvironment localEnv,
-        List<string> sequence)
+    public static (string, ConsoleColor) RunComparativeAnalysisHandler(ExecutionEnvironment localEnv, List<string> sequence)
     {
         // ✅ LocalEnvironment parses the sequence and sets the Global Rounds, which are then used throughout localStateEnv
         using (var localStateEnv = new LocalEnvironment(localEnv, sequence))
@@ -752,8 +836,12 @@ public partial class Handlers
 
         foreach (InputType type in Enum.GetValues(typeof(InputType)))
         {
+            if (type == InputType.UserData)
+                continue; // ❌ Skip throughput test for UserData
+
             List<byte[]> inputBlocks = new();
-            for (var i = 0; i < blockCount; i++) inputBlocks.Add(GenerateTestInput(blockSize, type));
+            for (var i = 0; i < blockCount; i++)
+                inputBlocks.Add(GenerateTestInput(blockSize, type));
 
             var profile = InputProfiler.GetInputProfile(inputBlocks[0]);
 
