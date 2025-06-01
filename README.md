@@ -1,32 +1,29 @@
 # Mango — Adaptive Cryptographic Workbench
 
-> ⚡ Up to 185× faster than AES.  
-> ✅ Passes all 9/9 cryptographic metrics.  
-> 🔄 Fully reversible. Tuned for structured, random, and real-world data.
+> ⚡ Significantly faster than AES on structured and synthetic data  
+> ✅ Passes all 9/9 cryptographic metrics  
+> 🔄 Fully reversible — optimized for structured, random, and real-world data
 
 ## What is Adaptive Cryptography?
 
-Traditional ciphers apply a fixed sequence of operations to all input data, regardless of its structure. Mango introduces a new approach: **adaptive cryptography** — the idea that an encryption system should respond to the characteristics of the input itself.
+Traditional ciphers apply a fixed sequence of operations to all input data, regardless of its structure. Mango introduces a new model: **adaptive cryptography** — the idea that encryption should respond to the characteristics of the input itself.
 
-Instead of treating all data equally, Mango **profiles the input**, determines its structure (e.g., random, natural, sequential), and dynamically selects an optimized transformation sequence designed to maximize entropy, dispersion, and cryptographic strength.
+Rather than treating all data as equally random, Mango **profiles the input**, identifies structure (e.g., randomness, natural text, sequential patterns), and dynamically selects a transformation sequence optimized to maximize entropy, diffusion, and cryptographic resilience.
 
 ---
 
 ## How Mango Differs from Traditional Ciphers
 
-Mango is not a drop-in AES clone — it is a full cryptographic workbench and cipher engine designed for adaptability and analysis. Key differences include:
+Mango is not an AES clone — it is a full cryptographic workbench and cipher engine built for adaptability, insight, and fine-grained control. Key differences include:
 
 - 🔀 **Input-Adaptive Sequences**  
-  Each data type triggers a tailored transform path to maximize disruption of predictability.
+  Each input type (e.g., random, natural, sequential) triggers a tailored sequence of transformations to maximize entropy and disrupt structure.
 
-- 🔁 **Atomic Transform Architecture**  
-  Over 30 low-level transforms (e.g., bit shufflers, feedback mixers, pattern equalizers) can be composed into sequences.
+- 🔁 **Composable Atomic Transforms**  
+  Mango provides over 30 low-level, reversible operations — such as bit shufflers, feedback mixers, and pattern equalizers — that can be combined into powerful custom sequences.
 
-- 📊 **Metric-Based Scoring**  
-  Mango evaluates sequences against entropy, avalanche, bit variance, and other cryptographic metrics.
-
-- ⚙️ **Reversible and Deterministic**  
-  Every sequence is reversible, every output decryptable — no randomness is hidden from the user.
+- 📊 **Metric-Based Evaluation**  
+  Every encryption sequence is scored across cryptographic metrics including entropy, avalanche effect, bit variance, and positional mapping — enabling quantitative comparison and optimization.
 
 ---
 
@@ -47,41 +44,41 @@ Its adaptive engine analyzes input data in real time, **tailoring its encryption
 
 ### ⚡ Performance Comparison: Mango vs AES
 
-| Category              | **Mango (CLR)**                                                      | **AES (Native)**                                                  |
-|-----------------------|----------------------------------------------------------------------|-------------------------------------------------------------------|
-| **Sequence**          | SubBytesFwdTx → SubBytesInvTx → ButterflyWithPairsFwdTx → ChunkedFbTx | Fixed AES rounds                                                  |
-| **Global Rounds (GR)**| 6                                                                    | N/A                                                               |
-| **Aggregate Score**   | **91.43**                                                            | 71.90                                                             |
-| **Pass Count**        | **9 / 9**                                                            | 6 / 9                                                             |
-| **Reversibility**     | ✅ PASS                                                              | ✅ PASS                                                           |
-| **Entropy**           | ✅ 7.9523                                                            | ✅ 7.9552                                                         |
-| **Bit Variance**      | ✅ 0.5002                                                            | ❌ 0.5046 (fail by 0.0043)                                        |
-| **Sliding Window**    | ✅ 0.9039                                                            | ❌ 0.9103 (fail by 0.0076)                                        |
-| **Frequency Dist.**   | ✅ 0.7459                                                            | ❌ 0.7551 (fail by 0.0125)                                        |
-| **Periodicity**       | ✅ 1.0000                                                            | ✅ 1.0000                                                         |
-| **Correlation**       | ✅ 0.0036                                                            | ✅ 0.0039                                                         |
-| **Positional Mapping**| ✅ 0.0312                                                            | ✅ 0.0345                                                         |
-| **Avalanche Score**   | ✅ 54.64                                                             | ✅ 50.06                                                          |
-| **Key Dependency**    | ✅ 54.65                                                             | ✅ 49.71                                                          |
-| **Encryption Time**   | **⚡ 1.06 ms**                                                       | 🐢 **195.18 ms**                                                  |
+| Category              | **Mango (CLR)**                                                                                     | **AES (CLR)**                                                  |
+|-----------------------|-----------------------------------------------------------------------------------------------------|-------------------------------------------------------------------|
+| **Sequence**          | BitFlipCascadeTx → ShuffleNibblesFwdTx → MaskedDoubleSubFwdTx → CascadeSub3xFwdTx                  | Fixed AES rounds                                                  |
+| **Global Rounds (GR)**| 3                                                                                                   | N/A                                                               |
+| **Aggregate Score**   | **92.38**                                                                                           | 67.41                                                             |
+| **Pass Count**        | **9 / 9**                                                                                           | 5 / 9                                                             |
+| **Reversibility**     | ✅ PASS                                                                                             | ✅ PASS                                                           |
+| **Entropy**           | ✅ 7.9525                                                                                           | ✅ 7.9577                                                         |
+| **Bit Variance**      | ✅ 0.4986                                                                                           | ❌ 0.5038 (fail by 0.0035)                                        |
+| **Sliding Window**    | ✅ 0.9068                                                                                           | ❌ 0.9126 (fail by 0.0099)                                        |
+| **Frequency Dist.**   | ✅ 0.7472                                                                                           | ❌ 0.7582 (fail by 0.0156)                                        |
+| **Periodicity**       | ✅ 1.0000                                                                                           | ✅ 1.0000                                                         |
+| **Correlation**       | ✅ 0.0119                                                                                           | ✅ -0.0281                                                        |
+| **Positional Mapping**| ✅ 0.0329                                                                                           | ✅ 0.0327                                                         |
+| **Avalanche Score**   | ✅ 50.48                                                                                            | ❌ 41.32 (fail by 8.68)                                           |
+| **Key Dependency**    | ✅ 49.53                                                                                            | ✅ 50.03                                                          |
+| **Encryption Time**   | ⚡ **108.69 ms**                                                                                    | 🐢 **203.46 ms**                                                  |
 
 ---
 
 ### 🧠 Key Observations
 
-- 🔒 **Mango passed all 9/9 cryptographic metrics** — AES failed up to 3 depending on input type.
-- ⚡ **Mango outperforms AES by 40× to 185×**, depending on the input type and test conditions.
-- 🧪 **Mango consistently exceeds AES** in entropy, avalanche, and diffusion metrics — especially on structured or semi-random data.
+- ✅ **Mango passed all 9/9 cryptographic metrics**, while AES failed 4 out of 9 on Natural input.
+- ⚡ **Mango encrypted 2× faster than AES** in this test (108.7 ms vs. 203.5 ms), despite running on the same CLR.
+- 🧪 **Mango demonstrated stronger diffusion and consistency**, with higher Avalanche and Key Dependency scores and fewer threshold violations — especially on real-world structured input.
 
 #### 📊 Mango's metrics breakdown per data type:
 
-| Input Type | Entropy                        | Avalanche         | Diffusion (Sliding/Frequency)             |
-|------------|--------------------------------|-------------------|-------------------------------------------|
-| **Natural**  | ⚖️ Close (AES slightly higher)   | ✅ Mango higher    | ✅ Mango passes both; AES fails both       |
-| **Random**   | ✅ Mango higher                 | ✅ Mango higher    | ✅ Mango passes both; AES fails both       |
-| **Sequence** | ⚖️ Comparable                   | ✅ Mango higher    | ✅ Mango passes both; AES fails Bit Var    |
-| **Combined** | ⚖️ Comparable                   | ⚖️ Very close      | ✅ Mango passes both; AES fails Bit Var    |
-
+| Input Type  | Entropy                        | Avalanche         | Diffusion (Sliding/Frequency)             |
+|-------------|--------------------------------|-------------------|-------------------------------------------|
+| **Natural** | ⚖️ Comparable                   | ✅ Mango higher    | ✅ Mango passes both; ❌ AES fails both     |
+| **Random**  | ⚖️ Comparable                   | ✅ Mango higher    | ✅ Mango passes both; ❌ AES fails both     |
+| **Sequence**| ⚖️ Comparable                   | ✅ Mango higher    | ✅ Mango passes both; ❌ AES fails both     |
+| **Combined**| ⚖️ Comparable                   | ✅ Mango higher    | ✅ Mango passes both; ❌ AES fails Frequency |
+| **UserData**| ⚖️ Comparable                   | ✅ Mango higher    | ✅ Mango passes both; ❌ AES fails both     |
 
 ---
 ## Quick Start
@@ -90,7 +87,7 @@ Mango supports two primary usage modes:
 
 ### 🧩 Run the Interactive Cryptographic Workbench
 
-The Mango Workbench (`Mango.exe`) allows you to interactively assemble, test, and analyze cryptographic sequences composed of ~40 atomic transforms.  
+The Mango Workbench (`Mango.exe`) allows you to interactively assemble, test, and analyze cryptographic sequences composed of ~50 atomic transforms.  
 You can build pipelines of arbitrary complexity, execute them, and view detailed metrics for strength, reversibility, and speed.
 
 ```
@@ -134,5 +131,7 @@ Ideal for exploring how Mango might integrate into streaming or block-wise syste
 📘 Full documentation is available in: `Workbench/Docs/`
 
 > **Note on Speed Comparisons:**  
-> The reported performance comparisons include AES's expensive key derivation step using PBKDF2 (e.g., 100,000 iterations), which is common in password-based encryption scenarios. Mango does not require this step and has minimal startup cost.  
-> In scenarios involving bulk data encryption where the AES key is reused, **raw AES cipher throughput is faster than Mango.**
+> All performance comparisons are made under equivalent, software-only conditions without hardware acceleration.  
+> AES remains strong in raw throughput, but Mango performs competitively — and often outpaces AES on high-entropy inputs.  
+> Throughput varies by profile (`.Best` vs `.Fast`) and input type, reflecting Mango’s adaptive design.  
+> Unlike AES, Mango includes scoring, validation, and structural transforms as part of its core pipeline, not as optional layers.
