@@ -1,8 +1,14 @@
-# Mango — Adaptive Cryptographic Workbench
+# Mango — Adaptive Cryptographic Library & Workbench
 
 > ⚡ Significantly faster than AES on structured and synthetic data  
 > ✅ Passes all 9/9 cryptographic metrics  
 > 🔄 Fully reversible — optimized for structured, random, and real-world data
+
+**Mango is a drop-in cryptographic library** for high-integrity data encryption.  
+It provides robust, profile-driven encryption designed for both speed and cryptographic strength.
+
+The included **Workbench** is an optional companion tool — ideal for profiling, tuning, and experimenting with custom transform sequences.  
+Profiles derived in the Workbench can be immediately used within the library with no code changes.
 
 ## What is Adaptive Cryptography?
 
