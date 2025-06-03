@@ -6,14 +6,13 @@
   "compilationOptions": {},
   "targets": {
     ".NETCoreApp,Version=v8.0": {
-      "MangoBM/1.0.0": {
+      "MangoZI/1.0.0": {
         "dependencies": {
-          "CryptoAnalysisCore": "1.0.0",
           "CryptoLib": "1.0.0",
           "InputProfiler": "1.0.0"
         },
         "runtime": {
-          "MangoBM.dll": {}
+          "MangoZI.dll": {}
         }
       },
       "CryptoAnalysisCore/1.0.0": {
@@ -59,7 +58,7 @@
     }
   },
   "libraries": {
-    "MangoBM/1.0.0": {
+    "MangoZI/1.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

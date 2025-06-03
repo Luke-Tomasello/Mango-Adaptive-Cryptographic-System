@@ -22,7 +22,8 @@
  * =============================================
  */
 
-using Mango.Adaptive; // InputProfiler lives here
+using Mango.Adaptive;
+using Mango.AnalysisCore; // InputProfiler lives here
 using Mango.Cipher;
 
 namespace MangoAC;
@@ -32,13 +33,15 @@ internal class MangoAC
     private static void Main(string[] args)
     {
         // 🔐 Step 1: Create your cryptographic engine
-        var crypto = new CryptoLib("my password");
+        byte[] Salt = [0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F, 0x70, 0x81, 0x92, 0xA3, 0xB4, 0xC5];
+        var options = new CryptoLibOptions(Salt);
+        var crypto = new CryptoLib("my password", options);
 
         // 📦 Step 2: Load or define your input data
         var input = Enumerable.Range(0, 256).Select(i => (byte)i).ToArray();
 
         // 🔍 Step 3: Profile the input (detect type, best sequence + rounds)
-        var profile = InputProfiler.GetInputProfile(input);
+        var profile = InputProfiler.GetInputProfile(input, OperationModes.Cryptographic, ScoringModes.Practical);
 
         // 🔒 Step 4: Encrypt using adaptive configuration
         var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);

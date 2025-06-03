@@ -28,6 +28,7 @@
  */
 
 using Mango.Adaptive;
+using Mango.AnalysisCore;
 using Mango.Cipher;
 
 namespace MangoBM;
@@ -91,10 +92,12 @@ internal class MangoBM
             .Select(i => Enumerable.Range(0, 1024).Select(b => (byte)((i + b) % 256)).ToArray())
             .ToList();
 
-        var crypto = new CryptoLib("my password");
+        byte[] Salt = [0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F, 0x70, 0x81, 0x92, 0xA3, 0xB4, 0xC5];
+        var options = new CryptoLibOptions(Salt);
+        var crypto = new CryptoLib("my password", options);
 
         // 📊 Step 2: Analyze first block
-        var profile = InputProfiler.GetInputProfile(inputBlocks[0]);
+        var profile = InputProfiler.GetInputProfile(inputBlocks[0], OperationModes.Cryptographic, ScoringModes.Practical);
 
         // 🔐 Step 3: Encrypt first block (header included)
         List<byte[]> outputBlocks = new();

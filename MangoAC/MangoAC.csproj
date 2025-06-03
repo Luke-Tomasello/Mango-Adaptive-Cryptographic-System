@@ -9,8 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\CryptoAnalysisCore\CryptoAnalysisCore.csproj" />
     <ProjectReference Include="..\CryptoLib\CryptoLib.csproj" />
     <ProjectReference Include="..\InputProfiler\InputProfiler.csproj" />
   </ItemGroup>
+	
 
 </Project>
