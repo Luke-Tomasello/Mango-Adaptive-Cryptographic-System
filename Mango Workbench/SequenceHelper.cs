@@ -20,12 +20,11 @@
  * =============================================
  */
 
-using Mango.Adaptive;
 using Mango.Cipher;
+using Mango.Common;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
-using Mango.Common;
 
 namespace Mango.Utilities;
 

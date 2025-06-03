@@ -215,9 +215,9 @@ public class CryptoAnalysis
                 sequence: sequence.ToArray(),
                 tRs: tRs,
                 globalRounds: localEnv.Globals.Rounds);
-            
+
             string currentSequence = seq.FormattedSequence<string>(profile);
-            
+
             logOutput.Add(
                 $"<Gray>Sequence:</Gray> <Green>{currentSequence}</Green>");
 

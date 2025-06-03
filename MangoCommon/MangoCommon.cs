@@ -1,8 +1,8 @@
-﻿using System.Buffers.Binary;
+﻿using Mango.Cipher;
+using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
-using Mango.Cipher;
 
 namespace Mango.Common;
 public record InputProfile(
@@ -31,7 +31,7 @@ public class Scoring
         // which led to "score drift" in Avalanche and KeyDependency metrics.
         // To ensure stable, repeatable results across time, machines, and profile edits,
         // we now use a fixed, static seed:
-        var mutationSeed = MutationSeed; 
+        var mutationSeed = MutationSeed;
 
         // ✏️ Modify input and password using reverse sequence
         var modifiedInput = ModifyInput(mutationSeed, input);
@@ -81,4 +81,63 @@ public class Scoring
         return mutatedInput;
     }
 }
+
+public static class MangoPaths
+{
+    private static string? _resolvedBaseDirectory;
+    private static string? _resolvedDataDirectory;
+
+    public static string GetProgectBaseDirectory()
+    {
+        if (_resolvedBaseDirectory != null)
+            return _resolvedBaseDirectory;
+
+        var current = AppContext.BaseDirectory;
+        var marker = "Mango Systems";
+
+        // Build list of probe paths in order of preference
+        var probePaths = new List<string>();
+
+        var markerIndex = current.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (markerIndex >= 0)
+            probePaths.Add(current.Substring(0, markerIndex + marker.Length));
+
+        probePaths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Mango"));
+        probePaths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Mango"));
+        probePaths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Mango"));
+        probePaths.Add(current); // Fallback
+
+        // Normalize all candidate paths
+        probePaths = probePaths
+            .Select(p => Path.GetFullPath(p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)))
+            .ToList();
+
+        // Use the first path that exists
+        _resolvedBaseDirectory = probePaths.FirstOrDefault(Directory.Exists) ?? Path.GetFullPath(current);
+        return _resolvedBaseDirectory;
+    }
+
+    public static string GetProgectDataDirectory()
+    {
+        if (_resolvedDataDirectory != null)
+            return _resolvedDataDirectory;
+
+        var baseDir = GetProgectBaseDirectory();
+        var dataDir = Path.Combine(baseDir, "Data");
+
+        _resolvedDataDirectory = Directory.Exists(dataDir)
+            ? Path.GetFullPath(dataDir)
+            : baseDir;
+
+        return _resolvedDataDirectory;
+    }
+
+    public static string GetProjectOutputDirectory()
+    {
+        var path = Path.Combine(MangoPaths.GetProgectBaseDirectory(), "Output");
+        Directory.CreateDirectory(path); // Ensure it exists
+        return path;
+    }
+}
+
 

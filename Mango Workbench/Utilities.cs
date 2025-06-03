@@ -26,25 +26,21 @@ using Mango.Adaptive;
 using Mango.Analysis;
 using Mango.AnalysisCore;
 using Mango.Cipher;
+using Mango.Common;
 using Mango.Reporting;
-using Mango.Workbench;
-using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Data.SQLite;
 using System.Diagnostics;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Mango.Common;
 using static Mango.AnalysisCore.CryptoAnalysisCore;
 using static Mango.Utilities.SequenceHelper;
 using static Mango.Utilities.TestInputGenerator;
 using Contender = Mango.Analysis.Contender;
 using Metric = Mango.AnalysisCore.Metric;
-using static Mango.Common.Scoring;
 
 namespace Mango.Utilities;
 
@@ -55,10 +51,10 @@ public partial class CutListHelper
     private int _activeDataIndex;
     private const int NumDataTypes = 5; // DC, DN, DR, DS, DU
 
-    public CutListHelper(string mungeFileName)
+    public CutListHelper(string mungeFilePathName)
     {
         messages = new List<string>(); // start fresh
-        Init(mungeFileName);
+        Init(mungeFilePathName);
     }
 
     private void Init(string file)
@@ -106,7 +102,6 @@ public partial class CutListHelper
 {
     private static CryptoLib? _cryptoLib;
     private static List<string> messages = new();
-    private const string _where = ".";
     private const string _dbname = "CutList.json";
 #if DEBUG
     private static bool _fileLocking = false;
@@ -122,7 +117,7 @@ public partial class CutListHelper
         LoadCutlistFromJson();
 
         var searchPattern = "Contenders,-L?-P?-D?-MC-SP.txt";
-        var directoryPath = _where;
+        var directoryPath = MangoPaths.GetProjectOutputDirectory();
 
         var contenderFiles = Directory.GetFiles(directoryPath, searchPattern)
             .Where(IsEligibleContenderFile)
@@ -272,7 +267,7 @@ public partial class CutListHelper
         messages.Add("\n🔍 Running Sanity Check...");
 
         var searchPattern = "Contenders,-L?-P?-D?-MC-SP.txt";
-        var directoryPath = _where;
+        var directoryPath = MangoPaths.GetProjectOutputDirectory();
 
         var contenderFiles = Directory.GetFiles(directoryPath, searchPattern)
             .Where(IsEligibleContenderFile)
@@ -348,7 +343,7 @@ public partial class CutListHelper
 
     private static void WriteCutlistToJson()
     {
-        var outputPath = Path.Combine(AppContext.BaseDirectory, _dbname);
+        var outputPath = Path.Combine(MangoPaths.GetProjectOutputDirectory(), _dbname);
 
         try
         {
@@ -379,7 +374,7 @@ public partial class CutListHelper
     public static void LoadCutlistFromJson()
     {
         _cutMatrixCache = new Dictionary<string, Dictionary<int, byte[]>>();
-        var jsonPath = Path.Combine(AppContext.BaseDirectory, _dbname);
+        var jsonPath = Path.Combine(MangoPaths.GetProjectOutputDirectory(), _dbname);
 
         if (File.Exists(jsonPath))
             try
@@ -410,7 +405,7 @@ public partial class CutListHelper
     public static bool AnyWork()
     {
         var searchPattern = "Contenders,-L?-P?-D?-M?-S?.txt";
-        var directoryPath = _where;
+        var directoryPath = MangoPaths.GetProjectOutputDirectory();
 
         var contenderFilesExist = Directory.Exists(directoryPath) &&
                                   Directory.GetFiles(directoryPath, searchPattern).Length > 0;
@@ -515,7 +510,7 @@ public partial class CutListHelper
 
     private static List<byte> CalculateTransformsFromFile(string contenderFileName)
     {
-        var filePath = Path.Combine(_where, Path.GetFileName(contenderFileName));
+        var filePath = Path.Combine(MangoPaths.GetProjectOutputDirectory(), Path.GetFileName(contenderFileName));
         var transformsInTopSequences = new HashSet<int>();
 
         var lines = File.ReadLines(filePath)
@@ -1832,15 +1827,16 @@ public static class TestInputGenerator
             if (_isInitialized)
                 return;
 
-            var randoms_filename = "randoms.bin";
-            var natural_filename = "Frankenstein.bin";
-            var natural_source = "Frankenstein.txt";
-            var userData_filename = "userdata.bin";
+            var dataPath = MangoPaths.GetProgectDataDirectory();
+            var randoms_filename = Path.Combine(dataPath, "randoms.bin");
+            var natural_filename = Path.Combine(dataPath, "Frankenstein.bin");
+            var natural_source = Path.Combine(dataPath, "Frankenstein.txt");
+            var userData_filename = Path.Combine(dataPath, "userdata.bin");
 
-            // 🚀 Load or generate Random Data
+            // Load or generate Random Data
             if (!File.Exists(randoms_filename))
             {
-                Console.WriteLine($"[WARN] {randoms_filename} not found. Generating new random data...");
+                Console.WriteLine($"[WARN] {Path.GetFileName(randoms_filename)} not found. Generating new random data...");
                 _randomData = new byte[4096];
                 using (var rng = RandomNumberGenerator.Create())
                 {
@@ -1852,14 +1848,14 @@ public static class TestInputGenerator
             {
                 _randomData = File.ReadAllBytes(randoms_filename);
             }
-            ValidateBuffer(_randomData, 4096, randoms_filename);
+            ValidateBuffer(_randomData, 4096, Path.GetFileName(randoms_filename));
 
-            // 🚀 Load or create Natural Data
+            // Load or create Natural Data
             if (!File.Exists(natural_filename))
             {
                 if (!File.Exists(natural_source))
                     throw new FileNotFoundException(
-                        $"❌ CRITICAL ERROR: {natural_source} not found. Cannot create {natural_filename}.");
+                        $"❌ CRITICAL ERROR: {Path.GetFileName(natural_source)} not found. Cannot create {Path.GetFileName(natural_filename)}.");
 
                 var textContent = File.ReadAllText(natural_source);
                 _naturalData = Encoding.UTF8.GetBytes(textContent);
@@ -1869,13 +1865,13 @@ public static class TestInputGenerator
             {
                 _naturalData = File.ReadAllBytes(natural_filename);
             }
-            ValidateBuffer(_naturalData, 4096, natural_filename);
+            ValidateBuffer(_naturalData, 4096, Path.GetFileName(natural_filename));
 
-            // 🚀 Generate Sequence Data
+            // Generate Sequence Data
             _sequenceData = Enumerable.Range(0, 4096).Select(i => (byte)i).ToArray();
             ValidateBuffer(_sequenceData, 4096, "Sequence Data");
 
-            // 🚀 Generate Combined Data using equal thirds approach
+            // Generate Combined Data using equal thirds approach
             var sliceSize = 4096 / 3;
             var natural = _naturalData.Take(sliceSize);
             var sequence = _sequenceData.Take(sliceSize);
@@ -1887,20 +1883,20 @@ public static class TestInputGenerator
             else if (_combinedData.Length > 4096)
                 _combinedData = _combinedData.Take(4096).ToArray();
 
-            // 🚀 Load user data if available
+            // Load user data if available
             if (File.Exists(userData_filename))
             {
                 _userData = File.ReadAllBytes(userData_filename);
-                ValidateBuffer(_userData, _userData.Length, userData_filename);
+                ValidateBuffer(_userData, _userData.Length, Path.GetFileName(userData_filename));
             }
 
             _isInitialized = true;
         }
     }
-
     public static void InitializeUserData(byte[] buffer)
     {
-        File.WriteAllBytes("userdata.bin", buffer);
+        var userDataPath = Path.Combine(MangoPaths.GetProgectDataDirectory(), "userdata.bin");
+        File.WriteAllBytes(userDataPath, buffer);
         _userData = buffer;
     }
 
@@ -2766,274 +2762,142 @@ public static class UtilityHelpers
 
 
     public static class CsvFormatter
-{
-    /// <summary>
-    /// Displays formatted CSV data from a file path to the console.
-    /// </summary>
-    /// <param name="csvFilePath">The path to the CSV file.</param>
-    public static void DisplayCsvFormatted(string csvFilePath)
     {
-        if (!File.Exists(csvFilePath))
+        /// <summary>
+        /// Displays formatted CSV data from a file path to the console.
+        /// </summary>
+        /// <param name="csvFilePath">The path to the CSV file.</param>
+        public static void DisplayCsvFormatted(string csvFilePath)
         {
-            Console.WriteLine($"Error: File not found at {csvFilePath}");
-            return;
-        }
+            if (!File.Exists(csvFilePath))
+            {
+                Console.WriteLine($"Error: File not found at {csvFilePath}");
+                return;
+            }
 
-        var lines = File.ReadAllLines(csvFilePath);
-        DisplayCsvFormatted(lines); // Call the new overload
-    }
+            var lines = File.ReadAllLines(csvFilePath);
+            DisplayCsvFormatted(lines); // Call the new overload
+        }
 
         /// <summary>
         /// Displays formatted CSV data from a collection of strings (lines) to the console.
         /// Assumes the first string(s) are titles, and the actual CSV header is on the third line (index 2).
         /// </summary>
         /// <param name="csvLines">A collection of strings, where each string represents a line from the CSV.</param>
-#if true
-public static void DisplayCsvFormatted(IEnumerable<string> csvLines)
-{
-    var linesList = csvLines?.ToList(); // Convert to list to handle multiple enumerations and check for null
 
-    if (linesList == null || linesList.Count < 3)
-    {
-        Console.WriteLine("CSV data is empty or malformed (expected at least 3 lines: title, empty, header).");
-        return;
-    }
-
-    // Print title and spacer
-    Console.WriteLine(linesList[0]);
-    Console.WriteLine(linesList[1]);
-
-    // Parse header and data
-    var headers = linesList[2].Split(',').Select(h => h.Trim()).ToArray();
-    var dataRows = linesList.Skip(3).Select(line => line.Split(',').Select(c => c.Trim()).ToArray()).ToList();
-
-    // Compute column widths using max of header and data visual length
-    int[] columnWidths = new int[headers.Length];
-
-    for (int i = 0; i < headers.Length; i++)
-    {
-        int maxWidth = GetVisualLength(headers[i]);
-
-        foreach (var row in dataRows)
+        public static void DisplayCsvFormatted(IEnumerable<string> csvLines)
         {
-            if (i < row.Length)
+            var linesList = csvLines?.ToList(); // Convert to list to handle multiple enumerations and check for null
+
+            if (linesList == null || linesList.Count < 3)
             {
-                int cellWidth = GetVisualLength(row[i]);
-                if (cellWidth > maxWidth)
-                    maxWidth = cellWidth;
+                Console.WriteLine("CSV data is empty or malformed (expected at least 3 lines: title, empty, header).");
+                return;
             }
+
+            // Print title and spacer
+            Console.WriteLine(linesList[0]);
+            Console.WriteLine(linesList[1]);
+
+            // Parse header and data
+            var headers = linesList[2].Split(',').Select(h => h.Trim()).ToArray();
+            var dataRows = linesList.Skip(3).Select(line => line.Split(',').Select(c => c.Trim()).ToArray()).ToList();
+
+            // Compute column widths using max of header and data visual length
+            int[] columnWidths = new int[headers.Length];
+
+            for (int i = 0; i < headers.Length; i++)
+            {
+                int maxWidth = GetVisualLength(headers[i]);
+
+                foreach (var row in dataRows)
+                {
+                    if (i < row.Length)
+                    {
+                        int cellWidth = GetVisualLength(row[i]);
+                        if (cellWidth > maxWidth)
+                            maxWidth = cellWidth;
+                    }
+                }
+
+                columnWidths[i] = maxWidth + 2; // Add padding
+            }
+
+            // Print header and divider
+            PrintLine(columnWidths);
+            PrintRow(headers, columnWidths);
+            PrintLine(columnWidths);
+
+            // Print data rows
+            foreach (var row in dataRows)
+            {
+                string[] currentRowValues = new string[headers.Length];
+                Array.Copy(row, currentRowValues, Math.Min(row.Length, headers.Length));
+                for (int i = row.Length; i < headers.Length; i++)
+                    currentRowValues[i] = "";
+
+                PrintRow(currentRowValues, columnWidths);
+            }
+
+            PrintLine(columnWidths);
         }
 
-        columnWidths[i] = maxWidth + 2; // Add padding
-    }
-
-    // Print header and divider
-    PrintLine(columnWidths);
-    PrintRow(headers, columnWidths);
-    PrintLine(columnWidths);
-
-    // Print data rows
-    foreach (var row in dataRows)
-    {
-        string[] currentRowValues = new string[headers.Length];
-        Array.Copy(row, currentRowValues, Math.Min(row.Length, headers.Length));
-        for (int i = row.Length; i < headers.Length; i++)
-            currentRowValues[i] = "";
-
-        PrintRow(currentRowValues, columnWidths);
-    }
-
-    PrintLine(columnWidths);
-}
-
-private static void PrintLine(int[] columnWidths)
-{
-    Console.WriteLine(new string('-', columnWidths.Sum() + (columnWidths.Length - 1) * 3 + 2));
-}
-
-private static void PrintRow(string[] rowValues, int[] columnWidths)
-{
-    for (int i = 0; i < rowValues.Length; i++)
-    {
-        var value = rowValues[i];
-        var originalColor = Console.ForegroundColor;
-
-        // Apply color if emoji prefix is present
-        bool hasEmoji = value.StartsWith("✅") || value.StartsWith("❌") || value.StartsWith("❓");
-
-        if (hasEmoji)
+        private static void PrintLine(int[] columnWidths)
         {
-            if (value.StartsWith("✅"))
-                Console.ForegroundColor = ConsoleColor.Green;
-            else if (value.StartsWith("❌"))
-                Console.ForegroundColor = ConsoleColor.Red;
-            else if (value.StartsWith("❓"))
-                Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine(new string('-', columnWidths.Sum() + (columnWidths.Length - 1) * 3 + 2));
         }
 
-        int visualLength = GetVisualLength(value);
-        int extraPadding = hasEmoji ? value.Length - visualLength : 0;
-        int padLength = columnWidths[i] + extraPadding;
+        private static void PrintRow(string[] rowValues, int[] columnWidths)
+        {
+            for (int i = 0; i < rowValues.Length; i++)
+            {
+                var value = rowValues[i];
+                var originalColor = Console.ForegroundColor;
 
-        Console.Write(value.PadRight(padLength));
-        Console.ForegroundColor = originalColor;
-        Console.Write(" | ");
-    }
-    Console.WriteLine();
-}
+                // Apply color if emoji prefix is present
+                bool hasEmoji = value.StartsWith("✅") || value.StartsWith("❌") || value.StartsWith("❓");
+
+                if (hasEmoji)
+                {
+                    if (value.StartsWith("✅"))
+                        Console.ForegroundColor = ConsoleColor.Green;
+                    else if (value.StartsWith("❌"))
+                        Console.ForegroundColor = ConsoleColor.Red;
+                    else if (value.StartsWith("❓"))
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                }
+
+                int visualLength = GetVisualLength(value);
+                int extraPadding = hasEmoji ? value.Length - visualLength : 0;
+                int padLength = columnWidths[i] + extraPadding;
+
+                Console.Write(value.PadRight(padLength));
+                Console.ForegroundColor = originalColor;
+                Console.Write(" | ");
+            }
+            Console.WriteLine();
+        }
 
 
         private static int GetVisualLength(string s)
-{
-    int length = 0;
-    for (int i = 0; i < s.Length; i++)
-    {
-        if (char.IsSurrogatePair(s, i))
         {
-            length += 1;
-            i++; // Skip the low surrogate
-        }
-        else
-        {
-            length += 1;
-        }
-    }
-    return length;
-}
-
-#else
-        public static void DisplayCsvFormatted(IEnumerable<string> csvLines)
-    {
-        var linesList = csvLines?.ToList(); // Convert to list to handle multiple enumerations and check for null
-
-        // We expect at least 3 lines: Title, Empty, Header
-        if (linesList == null || linesList.Count < 3)
-        {
-            Console.WriteLine("CSV data is empty or malformed (expected at least 3 lines: title, empty, header).");
-            return;
-        }
-
-        // Print the initial title and empty line directly
-        Console.WriteLine(linesList[0]); // e.g., "🔶 Mango Metric Breakdown"
-        Console.WriteLine(linesList[1]); // The empty line
-
-        // The actual header is at index 2
-        var headers = linesList[2].Split(',').Select(h => h.Trim()).ToArray();
-        // The data rows start from index 3
-        var dataRows = linesList.Skip(3).Select(line => line.Split(',').Select(c => c.Trim()).ToArray()).ToList();
-
-        // Determine maximum column widths
-        int[] columnWidths = new int[headers.Length];
-        for (int i = 0; i < headers.Length; i++)
-        {
-            columnWidths[i] = headers[i].Length; // Start with header length
-        }
-
-        foreach (var row in dataRows)
-        {
-            // Ensure bounds checking for rows that might have fewer columns than headers
-            for (int i = 0; i < row.Length && i < headers.Length; i++)
+            int length = 0;
+            for (int i = 0; i < s.Length; i++)
             {
-                //if (row[i].Length > columnWidths[i])
-                //{
-                //    columnWidths[i] = row[i].Length;
-                //}
-
-                int visualLength = GetVisualLength(row[i]);
-                if (visualLength > columnWidths[i])
+                if (char.IsSurrogatePair(s, i))
                 {
-                    columnWidths[i] = visualLength;
+                    length += 1;
+                    i++; // Skip the low surrogate
                 }
-
+                else
+                {
+                    length += 1;
                 }
             }
-
-        // Add some padding
-        for (int i = 0; i < columnWidths.Length; i++)
-        {
-            columnWidths[i] += 2; // Add 2 spaces for padding
+            return length;
         }
 
-        // Print Header and Data Table
-        PrintLine(columnWidths);
-        PrintRow(headers, columnWidths);
-        PrintLine(columnWidths);
 
-        // Print Data
-        foreach (var row in dataRows)
-        {
-            // Create a temporary array to hold row values, ensuring it matches header length
-            string[] currentRowValues = new string[headers.Length];
-            Array.Copy(row, currentRowValues, Math.Min(row.Length, headers.Length)); // Copy existing values
-            for (int i = row.Length; i < headers.Length; i++)
-            {
-                currentRowValues[i] = ""; // Fill any missing columns with empty strings
-            }
-            PrintRow(currentRowValues, columnWidths);
-        }
-        PrintLine(columnWidths);
-    }
-    static int GetVisualLength(string s)
-    {
-        // Treat emoji as 1 visual char
-        int length = 0;
-        for (int i = 0; i < s.Length; i++)
-        {
-            if (char.IsSurrogatePair(s, i))
-            {
-                length += 1; // Count emoji or surrogate as one
-                i++;         // Skip the low surrogate
-            }
-            else
-            {
-                length += 1;
-            }
-        }
-        return length;
-    }
-
-        private static void PrintLine(int[] columnWidths)
-    {
-        // This calculates the total length of the line including column contents, padding, and separators.
-        // For N columns, the pattern is "| Content | Content | ... | Content |"
-        // Each column adds its width + 3 characters for the delimiter (' ', '|', ' ') EXCEPT the very last one.
-        // Total length = Sum(padded column widths) + (number of columns * 3) + 1 (for the initial '|' and final ' ')
-        int totalLineLength = columnWidths.Sum() + (columnWidths.Length * 3) + 1;
-        Console.WriteLine(new string('-', totalLineLength));
-    }
-
-    // Using the color-aware PrintRow
-    private static void PrintRow(string[] rowValues, int[] columnWidths)
-    {
-        Console.Write("| "); // Start of the row
-
-        for (int i = 0; i < rowValues.Length; i++)
-        {
-            var value = rowValues[i];
-            var originalColor = Console.ForegroundColor; // Save current color
-
-            // Apply color based on emoji prefix
-            if (value.StartsWith("✅"))
-                Console.ForegroundColor = ConsoleColor.Green;
-            else if (value.StartsWith("❌"))
-                Console.ForegroundColor = ConsoleColor.Red;
-            else if (value.StartsWith("❓"))
-                Console.ForegroundColor = ConsoleColor.Yellow;
-            else
-                Console.ForegroundColor = ConsoleColor.Gray; // Default data color
-
-            // Write the value, padded to its column width
-            Console.Write(value.PadRight(columnWidths[i]));
-
-            // Reset color before writing the delimiter for the next column
-            Console.ForegroundColor = originalColor;
-
-            // Write the column delimiter
-            Console.Write(" | ");
-        }
-        Console.WriteLine(); // End the row with a newline
-    }
-#endif
     }
 
     // Example Usage:
@@ -4369,29 +4233,30 @@ private static void PrintRow(string[] rowValues, int[] columnWidths)
         Console.WriteLine();
         foreach (var line in results) Console.WriteLine(line);
 
-        // Write to TXT
-        var txtPath = "TransformBenchmarkResults.txt";
+        // Write to TXT in the project data directory
+        var txtPath = Path.Combine(MangoPaths.GetProgectDataDirectory(), "TransformBenchmarkResults.txt");
         try
         {
             File.WriteAllLines(txtPath, results);
-            Console.WriteLine($"Benchmark results have been written to {txtPath}");
+            Console.WriteLine($"Benchmark results have been written to: {txtPath}");
         }
         catch (Exception ex)
         {
             Console.WriteLine($"An error occurred while writing to the file: {ex.Message}");
         }
 
-        // Write to JSON
-        var jsonPath = "TransformBenchmarkResults.json";
+
+        // Write to JSON in the project data directory
+        var jsonPath = Path.Combine(MangoPaths.GetProgectDataDirectory(), "TransformBenchmarkResults.json");
         try
         {
             var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
             File.WriteAllText(jsonPath, JsonSerializer.Serialize(jsonResults, jsonOptions));
-            Console.WriteLine($"Benchmark results have been written to {jsonPath}");
+            Console.WriteLine($"Benchmark results have been written to: {jsonPath}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"An error occurred while writing JSON: {ex.Message}");
+            Console.WriteLine($"❌ Failed to write benchmark results: {ex.Message}");
         }
     }
 
@@ -4421,8 +4286,9 @@ private static void PrintRow(string[] rowValues, int[] columnWidths)
     {
         try
         {
-            var json = File.ReadAllText("TransformBenchmarkResults.json");
-            var parsed = System.Text.Json.JsonSerializer.Deserialize<List<TransformBenchmark>>(json);
+            var jsonPath = Path.Combine(MangoPaths.GetProgectDataDirectory(), "TransformBenchmarkResults.json");
+            var json = File.ReadAllText(jsonPath);
+            var parsed = JsonSerializer.Deserialize<List<TransformBenchmark>>(json);
 
             BenchmarkCache = parsed!.ToDictionary(x => x.Id, x => x.TimePerOpMs);
         }
@@ -4431,6 +4297,7 @@ private static void PrintRow(string[] rowValues, int[] columnWidths)
             Console.WriteLine($"[Error] Failed to load benchmark cache: {ex.Message}");
             throw; // Fail loudly since benchmarks are required!
         }
+
     }
 
     public static void FlushAndReloadBenchmarkCache()

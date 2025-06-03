@@ -26,6 +26,7 @@ using Mango.Adaptive;
 using Mango.Analysis;
 using Mango.AnalysisCore;
 using Mango.Cipher;
+using Mango.Common;
 using Mango.Reporting;
 using Mango.SQL;
 using Mango.Utilities;
@@ -36,10 +37,9 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using static Mango.Adaptive.InputProfiler;
-using static Mango.AnalysisCore.CryptoAnalysisCore;
+using static Mango.Common.MangoPaths;
 using static Mango.Utilities.TestInputGenerator;
 using static Mango.Utilities.UtilityHelpers;
-using Mango.Common;
 namespace Mango.Workbench;
 
 public partial class Handlers
@@ -64,7 +64,7 @@ public partial class Handlers
         var cryptoLib = localEnv.Crypto; // 
         var cryptoAnalysis = localEnv.CryptoAnalysis; // 
 
-        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
         if (!File.Exists(path))
             return ("⚠️ No profiles found.", ConsoleColor.Yellow);
 
@@ -91,17 +91,17 @@ public partial class Handlers
 
                 var payload = cryptoLib.GetPayloadOnly(encrypted);
                 // 🧪 Avalanche and Key Dependency
-                var (avalanche, _, keydep, _) = 
+                var (avalanche, _, keydep, _) =
                     ProcessAvalancheAndKeyDependency(cryptoLib, input, password, profile);
 
                 var results = cryptoAnalysis.RunCryptAnalysis(
-                    encryptedData: payload, 
-                    avalanchePayload: avalanche, 
-                    keyDependencyPayload: keydep, 
+                    encryptedData: payload,
+                    avalanchePayload: avalanche,
+                    keyDependencyPayload: keydep,
                     inputData: input);
 
                 var score = cryptoAnalysis.CalculateAggregateScore(results, scoringMode);
-                
+
                 double elapsedMs = sw.Elapsed.TotalMilliseconds;
 
                 Console.WriteLine($"[{index}] {name,-20} Score: {score:F10}   in {elapsedMs:F2} ms");
@@ -144,7 +144,7 @@ public partial class Handlers
         if (string.IsNullOrWhiteSpace(profileName))
             return ("❌ Profile name cannot be empty.", ConsoleColor.Red);
 
-        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
         if (!File.Exists(path))
             return ("⚠️ No profiles found.", ConsoleColor.Yellow);
 
@@ -210,7 +210,7 @@ public partial class Handlers
         var profile = InputProfiler.CreateInputProfile(profileName, transformSequence, globalRounds);
 
         // Load existing profiles
-        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
         var existingProfiles = new List<InputProfile>();
 
         if (File.Exists(path))
@@ -325,7 +325,7 @@ public partial class Handlers
         var transformSequence = parsed.Transforms.Select(t => (t.ID, (byte)t.TR)).ToArray();
         var profile = InputProfiler.CreateInputProfile(profileName, transformSequence, globalRounds);
 
-        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
         var existingProfiles = new List<InputProfile>();
 
         if (File.Exists(path))
@@ -408,7 +408,7 @@ public partial class Handlers
         if (string.IsNullOrWhiteSpace(profileName))
             return ("❌ Profile name cannot be empty.", ConsoleColor.Red);
 
-        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
         if (!File.Exists(path))
             return ($"⚠️ No profiles found.", ConsoleColor.Yellow);
 
@@ -442,7 +442,7 @@ public partial class Handlers
         if (string.IsNullOrWhiteSpace(oldName) || string.IsNullOrWhiteSpace(newName))
             return ("❌ Profile names cannot be empty.", ConsoleColor.Red);
 
-        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
         if (!File.Exists(path))
             return ($"⚠️ No profiles found.", ConsoleColor.Yellow);
 
@@ -471,7 +471,7 @@ public partial class Handlers
 
     public static (string, ConsoleColor) ListProfiles(ExecutionEnvironment localEnv, string[] args)
     {
-        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
         if (!File.Exists(path))
             return ("⚠️ No profiles found.", ConsoleColor.Yellow);
 
@@ -523,7 +523,7 @@ public partial class Handlers
 
     public static (string, ConsoleColor) TouchProfiles(ExecutionEnvironment parentEnv)
     {
-        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
         if (!File.Exists(path))
             return ("⚠️ No profiles found.", ConsoleColor.Yellow);
 
@@ -868,7 +868,7 @@ public partial class Handlers
         var testName = string.Join(" ", args);
         var rounds = 1000;
 
-        var jsonPath = "TransformProfileResults.json";
+        var jsonPath = Path.Combine(MangoPaths.GetProgectDataDirectory(), "TransformProfileResults.json");
         var resultCache = File.Exists(jsonPath)
             ? JsonSerializer.Deserialize<Dictionary<string, double>>(File.ReadAllText(jsonPath))
             : new Dictionary<string, double>();
@@ -1291,7 +1291,7 @@ public partial class Handlers
         }
         finally
         {
-            
+
         }
     }
 
@@ -1360,7 +1360,7 @@ public partial class Handlers
     {
         try
         {
-            ContenderAnalyzer.AnalyzeAndReport(".");
+            ContenderAnalyzer.AnalyzeAndReport(MangoPaths.GetProjectOutputDirectory());
 
             // Pause the output
             Console.WriteLine("\nPress any key to return to the main menu...");
@@ -1569,9 +1569,9 @@ public partial class Handlers
                 inputBlocks.Add(GenerateTestInput(blockSize, type));
 
             var profile = InputProfiler.GetInputProfile(
-                inputBlocks[0], 
-                localEnv.Globals.Mode, 
-                localEnv.Globals.ScoringMode, 
+                inputBlocks[0],
+                localEnv.Globals.Mode,
+                localEnv.Globals.ScoringMode,
                 performance: EncryptionPerformanceMode.Fast);
 
             List<byte[]> mangoEncryptedBlocks = new();
@@ -2805,7 +2805,8 @@ public partial class Handlers
     public static (string, ConsoleColor) LogToFileHandler(ExecutionEnvironment localEnv)
     {
         var logFileName = GetContenderFilename(localEnv, 0);
-        localEnv.CryptoAnalysis.LogToFile(localEnv, logFileName, 1000);
+        var fullPath = Path.Combine(MangoPaths.GetProjectOutputDirectory(), logFileName);
+        localEnv.CryptoAnalysis.LogToFile(localEnv, fullPath, 1000);
         return ($"Log summary written to {logFileName}.", ConsoleColor.Green);
     }
 
@@ -2817,7 +2818,7 @@ public partial class Handlers
 
     public static (string, ConsoleColor) FileToSQLHandler()
     {
-        var filaname = "ContenderLog.txt";
+        var filaname = Path.Combine(MangoPaths.GetProjectOutputDirectory(), "ContenderLog.txt");
         FileToSQL(filaname);
         return ($"Contenders written to {filaname}.", ConsoleColor.Green);
     }

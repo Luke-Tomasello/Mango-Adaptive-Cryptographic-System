@@ -147,7 +147,7 @@ public partial class CryptoAnalysisCore
     public Dictionary<string, MetricInfo> MetricsRegistry { get; private set; }
 
     public CryptoAnalysisCore()
-    :this(OperationModes.Zero)
+    : this(OperationModes.Zero)
     {
 
     }

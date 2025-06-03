@@ -25,16 +25,15 @@
 using Mango.Adaptive;
 using Mango.AnalysisCore;
 using Mango.Cipher;
+using Mango.Common;
 using Mango.Reporting;
 using Mango.SQL;
 using Mango.Utilities;
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using Mango.Common;
 using static Mango.SQL.SequenceFailSQL.Tools;
 using static Mango.Utilities.UtilityHelpers;
 using static Mango.Utilities.UtilityHelpers.MungeStatePersistence;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace Mango.Workbench;
 
@@ -92,7 +91,12 @@ public partial class Handlers
         #endregion Display/Warnings
 
         // ✅ Initialize the failure database  
-        SequenceFailSQL.OpenDatabase(GetFailDBFilename(localEnv, "BTRFailDB,"), true);
+        var failDbPath = Path.Combine(
+            MangoPaths.GetProjectOutputDirectory(),
+            GetFailDBFilename(localEnv, "BTRFailDB,")
+        );
+
+        SequenceFailSQL.OpenDatabase(failDbPath, true);
 
         var paramPack = new ParamPack(functionName: "optimize sequence", args: args);
 
@@ -139,8 +143,13 @@ public partial class Handlers
             CutListHelper.Compile(localEnv.Crypto);
 
             // Open failure database
-            SequenceFailSQL.OpenDatabase(GetFailDBFilename(localEnv, "MungeFailDB,"),
-                localEnv.Globals.CreateMungeFailDB);
+            var failDbPath = Path.Combine(
+                MangoPaths.GetProjectOutputDirectory(),
+                GetFailDBFilename(localEnv, "MungeFailDB,")
+            );
+
+            SequenceFailSQL.OpenDatabase(failDbPath, localEnv.Globals.CreateMungeFailDB);
+
             var result = MungeCore(localEnv, "run munge", validTransformIds.AsReadOnly(), args);
             SequenceFailSQL.CloseDatabase();
             return result;
@@ -182,9 +191,14 @@ public partial class Handlers
                 localEnv.Globals.MaxSequenceLen = 5;
                 args = new string[] { "-L5" };
                 MungeWorker(localEnv, "Munge K", validTransformIds, args);
+                
                 // Open failure database
-                SequenceFailSQL.OpenDatabase(GetFailDBFilename(localEnv, "MungeFailDB,"),
-                    localEnv.Globals.CreateMungeFailDB);
+                var failDbPath = Path.Combine(
+                    MangoPaths.GetProjectOutputDirectory(),
+                    GetFailDBFilename(localEnv, "MungeFailDB,")
+                );
+
+                SequenceFailSQL.OpenDatabase(failDbPath, localEnv.Globals.CreateMungeFailDB);
                 var result = MungeKCore(localEnv, "run munge k", metaPackages, validTransformIds, args);
                 SequenceFailSQL.CloseDatabase();
                 return result;
@@ -327,8 +341,15 @@ public partial class Handlers
         var exitCount = parentEnv.Globals.Rounds;
         var paramPack = new ParamPack(".gs1", "batch optimize sequences", exitCount: exitCount, reorder: false,
             useCuratedTransforms: false, topContenders: 5);
+
         // ✅ Initialize the failure database  
-        SequenceFailSQL.OpenDatabase(GetFailDBFilename(parentEnv, "BTRFailDB,"), true);
+        var failDbPath = Path.Combine(
+            MangoPaths.GetProjectOutputDirectory(),
+            GetFailDBFilename(parentEnv, "BTRFailDB,")
+        );
+
+        SequenceFailSQL.OpenDatabase(failDbPath, true);
+
         var result = BTRBatchWorker(parentEnv, args, paramPack, BestFitTransformRoundsCore);
         // ✅ close the failure database  
         SequenceFailSQL.CloseDatabase();
@@ -338,8 +359,15 @@ public partial class Handlers
     public static (string, ConsoleColor) RunBTGRRBatchHandler(ExecutionEnvironment parentEnv, string[] args)
     {
         var paramPack = new ParamPack(".gs2", "batch optimize + reorder sequences", 5, 5, true, false, 5);
+
         // ✅ Initialize the failure database  
-        SequenceFailSQL.OpenDatabase(GetFailDBFilename(parentEnv, "BTRFailDB,"), true);
+        var failDbPath = Path.Combine(
+            MangoPaths.GetProjectOutputDirectory(),
+            GetFailDBFilename(parentEnv, "BTRFailDB,")
+        );
+
+        SequenceFailSQL.OpenDatabase(failDbPath, true);
+
         var result = BTRBatchWorker(parentEnv, args, paramPack, BestFitTransformRoundsReorderCore);
         // ✅ close the failure database  
         SequenceFailSQL.CloseDatabase();
@@ -349,8 +377,15 @@ public partial class Handlers
     public static (string, ConsoleColor) RunMungeEHandler(ExecutionEnvironment parentEnv, string[] args)
     {
         var paramPack = new ParamPack(".gs3", "run munge e", 5, 5, true, true, 20);
+
         // ✅ Initialize the failure database  
-        SequenceFailSQL.OpenDatabase(GetFailDBFilename(parentEnv, "BTRFailDB,"), true);
+        var failDbPath = Path.Combine(
+            MangoPaths.GetProjectOutputDirectory(),
+            GetFailDBFilename(parentEnv, "BTRFailDB,")
+        );
+
+        SequenceFailSQL.OpenDatabase(failDbPath, true);
+
         var result = BTRBatchWorker(parentEnv, args, paramPack, BestFitTransformRoundsReorderCore);
         // ✅ close the failure database  
         SequenceFailSQL.CloseDatabase();
@@ -393,7 +428,7 @@ public partial class Handlers
         if (files.Length == 0)
             return ("❌ No Munge files found matching criteria.", ConsoleColor.Red);
         else if (VerifyMungeFile(files, out var errorMessage, "-S") == false) return (errorMessage, ConsoleColor.Red);
-        
+
         if (IsInteractiveWorkbench(parentEnv))
         {
             // 📂 Display files selected for batch optimization
@@ -652,7 +687,12 @@ public partial class Handlers
         var localEnv = new ExecutionEnvironment(parentEnv);
 
         // ✅ Initialize the failure database  -- STILL NEEDED (failure DB is per-environment)
-        SequenceFailSQL.OpenDatabase(GetFailDBFilename(localEnv, "BTRFailDB,"), true);
+        var failDbPath = Path.Combine(
+            MangoPaths.GetProjectOutputDirectory(),
+            GetFailDBFilename(localEnv, "BTRFailDB,")
+        );
+
+        SequenceFailSQL.OpenDatabase(failDbPath, true);
 
         // --- CHANGE: Formatting the sequence string ---
         var seqHelper = new SequenceHelper(localEnv.Crypto);
@@ -863,8 +903,13 @@ public partial class Handlers
             // ➤ For example, an L5 run executes L1–L5 and stores progress in `State,-L5-...json`.
             // ➤ This prevents interference with shorter runs like L4, which use `State,-L4-...json`.
             // ✅ Ensures safe and isolated resume behavior across different Munge configurations.
-            restoredState =
-                MungeStatePersistence.RestoreMungeState(GetStateFilename(parentEnv, parentEnv.Globals.MaxSequenceLen));
+            var stateFilename = Path.Combine(
+                MangoPaths.GetProjectOutputDirectory(),
+                GetStateFilename(parentEnv, parentEnv.Globals.MaxSequenceLen)
+            );
+
+            restoredState = MungeStatePersistence.RestoreMungeState(stateFilename);
+
             if (restoredState != null)
             {
                 // 🧼 Normalize: If Contenders was null, assign empty list for safe processing
@@ -1182,8 +1227,18 @@ public partial class Handlers
                         // ➤ Example: An L5 Munge saves all intermediate and current progress to `State,-L5-...json`.
                         // ➤ Allows seamless resume across sessions, without clobbering L4 or other configurations.
                         // ✅ Keeps save/restore behavior consistent and isolated by Munge level umbrella.
-                        MungeStatePersistence.SaveMungeState(snapshotContenders, length, transforms.ToArray(), sequence,
-                            GetStateFilename(parentEnv, parentEnv.Globals.MaxSequenceLen));
+                        var stateFilename = Path.Combine(
+                            MangoPaths.GetProjectOutputDirectory(),
+                            GetStateFilename(parentEnv, parentEnv.Globals.MaxSequenceLen)
+                        );
+
+                        MungeStatePersistence.SaveMungeState(
+                            snapshotContenders,
+                            length,
+                            transforms.ToArray(),
+                            sequence,
+                            stateFilename
+                        );
 
                         ColorConsole.WriteLine($"<Yellow>[Snapshot]</Yellow> Munge state saved at {DateTime.Now:t}");
                     }
@@ -1198,7 +1253,8 @@ public partial class Handlers
 
             var logFileName = GetContenderFilename(parentEnv, length);
 
-            parentEnv.CryptoAnalysis.LogToFile(parentEnv, logFileName, parentEnv.Globals.DesiredContenders);
+            var fullPath = Path.Combine(MangoPaths.GetProjectOutputDirectory(), logFileName);
+            parentEnv.CryptoAnalysis.LogToFile(parentEnv, fullPath, parentEnv.Globals.DesiredContenders);
 
             LogIfEnabled(parentEnv, DebugFlags.StatusMessage,
                 $"<Green>Completed length</Green> {length} <Green>in</Green> {DateTime.UtcNow - lengthStartTime:g}",
@@ -1398,8 +1454,8 @@ public partial class Handlers
             FlushAnalysisQueue(localEnv, analysisQueue, failureKey); // Final flush after all lengths
 
             var logFileName = GetContenderFilename(localEnv, length);
-
-            localEnv.CryptoAnalysis.LogToFile(localEnv, logFileName, localEnv.Globals.DesiredContenders);
+            var fullPath = Path.Combine(MangoPaths.GetProjectOutputDirectory(), logFileName);
+            localEnv.CryptoAnalysis.LogToFile(localEnv, fullPath, localEnv.Globals.DesiredContenders);
 
             LogIfEnabled(localEnv, DebugFlags.StatusMessage,
                 $"<Green>Completed length</Green> {length} <Green>in</Green> {DateTime.UtcNow - startTime:g}",
@@ -1680,7 +1736,7 @@ public partial class Handlers
                     }
                     finally
                     {
-                        
+
                     }
                 });
 
@@ -2457,17 +2513,18 @@ public partial class Handlers
     /// <param name="validTransformIds">The full list of valid transform IDs.</param>
     /// <param name="length">The current sequence length (e.g., L3, L4, etc.).</param>
     /// <returns>A filtered list of transform IDs with low-performers removed.</returns>
-    private static List<byte> ApplyCutListFiltering(ExecutionEnvironment localEnv, List<byte> validTransformIds,
-        int length)
+    private static List<byte> ApplyCutListFiltering(ExecutionEnvironment localEnv, List<byte> validTransformIds, int length)
     {
         if (!CutListHelper.AnyWork())
             return validTransformIds; // No filtering needed
 
-        var contenderFile = GetContenderFilename(localEnv, length);
-        if (!CutListHelper.IsEligibleContenderFile(contenderFile))
+        var logName = GetContenderFilename(localEnv, length);
+        var contenderFile = Path.Combine(MangoPaths.GetProjectOutputDirectory(), logName);
+
+        if (!CutListHelper.IsEligibleContenderFile(logName))
         {
             LogIfEnabled(localEnv, DebugFlags.StatusMessage,
-                $"⚠️ Skipped CutList verification for {contenderFile}: Level or PassCount excluded from cutlist generation (L1/L2 or P0/P1).");
+                $"⚠️ Skipped CutList verification for {logName}: Level or PassCount excluded from cutlist generation (L1/L2 or P0/P1).");
             return validTransformIds; // Skip cutlist filtering for low-pass or short-length runs
         }
 

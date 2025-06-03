@@ -26,6 +26,7 @@
 using Mango.Adaptive;
 using Mango.AnalysisCore;
 using Mango.Cipher;
+using Mango.Common;
 using Mango.Utilities;
 using Newtonsoft.Json;
 using System.Text;
@@ -35,7 +36,6 @@ using static Mango.Utilities.SequenceHelper;
 using static Mango.Utilities.TestInputGenerator;
 using static Mango.Utilities.UtilityHelpers;
 using static Mango.Workbench.Handlers;
-using Mango.Common;
 namespace Mango.Workbench;
 
 public static class MangoConsole

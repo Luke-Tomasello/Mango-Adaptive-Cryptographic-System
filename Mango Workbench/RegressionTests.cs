@@ -23,14 +23,12 @@
  * =============================================
  */
 
-using System.Collections.Immutable;
 using Mango.Adaptive;
 using Mango.AnalysisCore;
 using Mango.Cipher;
+using Mango.Common;
 using System.Diagnostics;
 using static Mango.Utilities.UtilityHelpers;
-using Mango.AesSoftwareCore;
-using Mango.Common;
 
 namespace Mango.Utilities;
 
@@ -87,7 +85,7 @@ public static class RegressionTests
                 profile,
                 processAes: true);
 
-            var aesResults = localEnv.CryptoAnalysis.RunCryptAnalysis(aesPayload, aesAv, aesKd, baselineInput); 
+            var aesResults = localEnv.CryptoAnalysis.RunCryptAnalysis(aesPayload, aesAv, aesKd, baselineInput);
             var aesScore = localEnv.CryptoAnalysis.CalculateAggregateScore(aesResults, localEnv.Globals.ScoringMode);
             int aesPasses = aesResults.Count(r => r.Passed);
             var aesFailedMetrics = aesResults

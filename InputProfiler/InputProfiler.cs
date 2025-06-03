@@ -23,14 +23,12 @@
 
 using Mango.AnalysisCore;
 using Mango.Cipher;
-using System.Buffers.Binary;
+using Mango.Common;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
-using Mango.Common;
+using static Mango.Common.MangoPaths;
 using static Mango.Common.Scoring;
-
 namespace Mango.Adaptive;
 
 public enum EncryptionPerformanceMode
@@ -194,7 +192,7 @@ public class InputProfiler
         }
     }
 
-    
+
     private static string ClassificationWorker(byte[] data)
     {
         var fileType = KnownFileType(data);
@@ -319,7 +317,7 @@ public class InputProfiler
             {
                 if (!_profilesLoaded)
                 {
-                    var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+                    var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
                     if (!File.Exists(path))
                         throw new FileNotFoundException("Required InputProfiles.json file is missing.", path);
 
@@ -359,7 +357,7 @@ public class InputProfiler
     {
         lock (ProfilesLock)
         {
-            var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+            var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
             if (!File.Exists(path))
                 throw new FileNotFoundException("Required InputProfiles.json file is missing.", path);
 
