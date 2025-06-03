@@ -1,620 +1,248 @@
 ﻿/*
- * InputProfiler Module
- * =============================================
- * Project: Mango
- * Purpose: Performs intelligent classification of input data into types such as
- *          Natural, Random, Sequence, or Combined using Mango's high-speed
- *          Multi-Sample Model (MSM) and classic entropy analysis techniques.
- *
- *          This module supports: 
- *            • MSM Mode: Fast heuristic analysis using strategic sampling and FSM
- *            • Classic Mode: Full-scan entropy and periodicity profiling (fallback)
- *            • RLE, entropy, uniqueness, periodicity, and alpha heuristics
- *            • Sequence detection via stride-aware delta matching
- *            • Known file type instant detection (PDF, ZIP, EXE, etc.)
- *            • Automatic selection of best cryptographic profile per input
- *
- *          Powers Mango's adaptive encryption by selecting the correct
- *          InputProfile, enabling optimized transform sequences for each input type.
- *
- * Author: [Luke Tomasello, luke@tomasello.com]
- * Created: November 2024
- * License: [MIT]
- * =============================================
- */
+   * InputProfiler Module
+   * =============================================
+   * Project: Mango
+   * Purpose: Performs intelligent classification and profiling of input data
+   *          to enable Mango's adaptive cryptographic behavior.
+   *
+   *          This module supports:
+   *            • Static Classification: Uses magic bytes and format hints to match input to known types
+   *            • Encrypted Classification: Encrypts input with known profiles to find the best scoring match
+   *            • Fallback Handling: Defaults to a high-quality general-purpose profile when no match is found
+   *            • Seamless integration with pre-baked god-sequences (e.g., Natural, Random, Combined)
+   *
+   *          Powers Mango's adaptive encryption by dynamically selecting
+   *          the best InputProfile, ensuring cryptographic performance is tailored
+   *          to the structure and content of each input.
+   *
+   * Author: [Luke Tomasello, luke@tomasello.com]
+   * Created: November 2024
+   * License: [MIT]
+   * =============================================
+   */
 
-using System.Diagnostics;
+using Mango.AnalysisCore;
+using Mango.Cipher;
+using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Mango.Common;
+using static Mango.Common.Scoring;
 
 namespace Mango.Adaptive;
 
-public record InputProfile(
-    string Name, // e.g., "Combined", "Natural", etc. — Workbench-friendly label
-    (byte ID, byte TR)[] Sequence, // Transform sequence with rounds baked in
-    int GlobalRounds // Required by core + Workbench for configuration
-);
+public enum EncryptionPerformanceMode
+{
+    /// <summary>
+    /// Prioritizes speed of encryption/decryption, potentially at the expense of maximum security.
+    /// May use simpler algorithms, fewer rounds, or less robust key derivation.
+    /// </summary>
+    Fast,
 
+    /// <summary>
+    /// Prioritizes the highest level of security, potentially at the expense of performance.
+    /// May use more complex algorithms, more rounds, or more robust key derivation.
+    /// </summary>
+    Best
+}
 public class InputProfiler
 {
-    private static readonly Dictionary<string, InputProfile> BestProfiles = new()
+    /// <summary>
+    /// Selects the best-fit InputProfile for the provided input.
+    /// Prioritizes fast static classification (e.g., file signatures),
+    /// falls back to encrypted match against known profiles, and ultimately
+    /// uses the default profile if no match is found.
+    /// </summary>
+    public static InputProfile GetInputProfile(byte[] input, OperationModes weightingMode, ScoringModes scoringMode,
+        EncryptionPerformanceMode performance = EncryptionPerformanceMode.Best)
     {
-        // 🔐 Best Profile: Combined
-        // -------------------------
-        // ✅ Cryptographic Mode: GR:6, TRs: specified per transform
-        // ✅ Derived from Munge(A)(6) L5 winner
-        // ✅ Aggregate Score: 90.00 | Pass Count: 9/9
-        // ✅ AES-class performance across all metrics
-        //
-        // Sequence:
-        //   ButterflyTx(ID:8)(TR:3)
-        // → SubBytesXorMaskInvTx(ID:10)(TR:1)
-        // → ButterflyWithRotationFwdTx(ID:31)(TR:1)
-        // → SubBytesXorMaskFwdTx(ID:9)(TR:1)
-        // → ButterflyWithRotationFwdTx(ID:31)(TR:1)
-        // → | (GR:6)
-        //
-        // 🔥 This is the baked-in god-sequence for Combined data.
-        //    Selected for superior cryptographic metric shape under weighted analysis.
-        {
-            "Combined", new InputProfile("Combined", new (byte, byte)[]
-            {
-                (8, 3), // ButterflyTx
-                (10, 1), // SubBytesXorMaskInvTx
-                (31, 1), // ButterflyWithRotationFwdTx
-                (9, 1), // SubBytesXorMaskFwdTx
-                (31, 1) // ButterflyWithRotationFwdTx (again)
-            }, 6)
-        },
+        EnsureProfilesLoaded();
 
-        // 🧠 Best Profile: Natural
-        // -------------------------
-        // ✅ Cryptographic Mode: GR:3, TRs: all 1s
-        // ✅ Derived from Munge(A)(9) L5 winner
-        // ✅ Aggregate Score: 91.43 | Pass Count: 9/9
-        // ✅ AES-class performance across all metrics
-        //
-        // Sequence:
-        //   ButterflyWithRotationFwdTx(ID:31)(TR:1)
-        // → ButterflyWithPairsInvTx(ID:30)(TR:1)
-        // → ChunkedFbTx(ID:40)(TR:1)
-        // → BitFlipButterflyInvTx(ID:34)(TR:1)
-        // → ButterflyWithPairsFwdTx(ID:29)(TR:1)
-        // → | (GR:3)
-        //
-        // 🔥 Tuned for structure-rich Natural data.
-        //    Balances bit symmetry, rotation, and inverse feedback.
-        {
-            "Natural", new InputProfile("Natural", new (byte, byte)[]
-            {
-                (31, 1), // ButterflyWithRotationFwdTx
-                (30, 1), // ButterflyWithPairsInvTx
-                (40, 1), // ChunkedFbTx
-                (34, 1), // BitFlipButterflyInvTx
-                (29, 1) // ButterflyWithPairsFwdTx
-            }, 3)
-        },
-
-        // 🧠 Best Profile: Sequence
-        // --------------------------
-        // ✅ Cryptographic Mode: GR:5, TRs: all 1s
-        // ✅ Derived from Munge(A)(9) L4 winner
-        // ✅ Aggregate Score: 87.14 | Pass Count: 9/9
-        // ✅ AES-class performance across all metrics
-        //
-        // Sequence:
-        //   ShuffleNibblesInvTx(ID:19)(TR:1)
-        // → ChunkedFbTx(ID:40)(TR:1)
-        // → ShuffleNibblesFwdTx(ID:18)(TR:1)
-        // → ButterflyWithPairsInvTx(ID:30)(TR:1)
-        // → | (GR:5)
-        //
-        // 🔥 Specially crafted for structured, patterned input.
-        //    Maximizes disruption of sequential predictability.
-        {
-            "Sequence", new InputProfile("Sequence", new (byte, byte)[]
-            {
-                (19, 1), // ShuffleNibblesInvTx
-                (40, 1), // ChunkedFbTx
-                (18, 1), // ShuffleNibblesFwdTx
-                (30, 1) // ButterflyWithPairsInvTx
-            }, 5)
-        },
-
-
-        // 🎲 Best Profile: Random
-        // ------------------------
-        // ✅ Cryptographic Mode: GR:3, TRs: all 1s
-        // ✅ Derived from Munge(A)(6) L5 winner
-        // ✅ Aggregate Score: 90.00 | Pass Count: 9/9
-        //
-        // Sequence:
-        //   ButterflyTx(ID:8)(TR:1)
-        // → NibbleSwapShuffleFwdTx(ID:13)(TR:1)
-        // → NibbleSwapShuffleFwdTx(ID:13)(TR:1)
-        // → BitFlipButterflyFwdTx(ID:33)(TR:1)
-        // → ChunkedFbTx(ID:40)(TR:1)
-        // → | (GR:3)
-        //
-        // 🔥 Optimized for high-entropy, structureless input.
-        //    Deep nonlinear diffusion with symmetry disruption.
-        {
-            "Random", new InputProfile("Random", new (byte, byte)[]
-            {
-                (8, 1), // ButterflyTx
-                (13, 1), // NibbleSwapShuffleFwdTx
-                (13, 1), // NibbleSwapShuffleFwdTx
-                (33, 1), // BitFlipButterflyFwdTx
-                (40, 1) // ChunkedFbTx
-            }, 3)
-        }
-    };
-
-    public static InputProfile GetInputProfile(byte[] input)
-    {
+        // 🧠 Step 1: Attempt static classification based on known file signatures
         var classification = ClassificationWorker(input);
+        if (BestProfiles.TryGetValue(classification, out var profile))
+            return profile;
 
-        // 🔹 Normalize classification string to match what the Workbench expects
-        classification = classification switch
+        // 🔍 Step 2: If static classification fails, evaluate encrypted fit
+        classification = FindBestProfileByEncryption(input, weightingMode, scoringMode, performance);
+        if (BestProfiles.TryGetValue(classification, out profile))
+            return profile;
+
+        // 🚨 Step 3: Final fallback (should never occur if Default.Best exists)
+        throw new InvalidOperationException(
+            $"No fallback profile found. Classification attempted: {classification}");
+    }
+    public static InputProfile CreateInputProfile(string? name,
+        byte[] sequence,
+        byte[] tRs,
+        int globalRounds,
+        double aggregateScore = 0.0)
+    {
+        name ??= "Dynamic";
+
+        if (sequence.Length != tRs.Length)
+            throw new ArgumentException("Sequence and tRs must be of equal length.");
+
+        var sequenceWithRounds = new (byte ID, byte TR)[sequence.Length];
+        for (int i = 0; i < sequence.Length; i++)
+            sequenceWithRounds[i] = (sequence[i], tRs[i]);
+
+        return new InputProfile(name, sequenceWithRounds, globalRounds, aggregateScore);
+    }
+    public static InputProfile CreateInputProfile(
+        string? name,
+        (byte ID, byte TR)[] sequenceWithRounds,
+        int globalRounds,
+        double aggregateScore = 0.0)
+    {
+        name ??= "Dynamic";
+        return new InputProfile(name, sequenceWithRounds, globalRounds, aggregateScore);
+    }
+
+    private static readonly int CacheCapacity = 16;
+    private static readonly Dictionary<string, string> ProfileMatchCache = new();
+    private static readonly LinkedList<string> CacheOrder = new();
+    private static readonly object CacheLock = new();
+
+    private static string FindBestProfileByEncryption(byte[] input,
+        OperationModes weightMode,
+        ScoringModes scoringMode,
+        EncryptionPerformanceMode performance)
+    {
+        const double tolerance = 0.98;
+        const string fallbackProfile = "Default.Best";
+        const string password = "sample-password";
+
+        byte[] inputHash = SHA256.HashData(input);
+        string cacheKey = Convert.ToBase64String(inputHash) + ":" + performance;
+
+        lock (CacheLock)
         {
-            "Random/Encrypted" => "Random",
-            "Natural" => "Natural",
-            "Sequence" => "Sequence",
-            "Combined" => "Combined",
-            "Media" => "Combined", // ✅ Media formats handled as "Combined"
-            _ => "Combined" // ✅ Default fallback
-        };
-
-        if (!BestProfiles.TryGetValue(classification, out var profile))
-            throw new InvalidOperationException($"No best profile defined for classification: {classification}");
-
-        return profile;
-    }
-
-    private static string ClassificationWorker(byte[] data, bool useSampleMode = true)
-    {
-        const int iterations = 1;
-        const bool verbose = false;
-
-        //Console.WriteLine($"\nAnalyzing: {filePath} ({data.Length} bytes)");
-        //Console.WriteLine($"Running {iterations} iterations for benchmarking...\n");
-
-        var stopwatch = new Stopwatch();
-        Dictionary<string, int> classificationCounts = new();
-        string classification = null!;
-
-        for (var i = 0; i < iterations; i++)
-        {
-            stopwatch.Restart();
-
-            double avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow;
-            Dictionary<int, (double, double, double, double, double, double, double)>? windowResults = null;
-
-            if (useSampleMode)
-                (classification, avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow,
-                    windowResults) = AnalyzeDataMSM(data, i, verbose);
-            else
-                (classification, avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow, _) =
-                    AnalyzeDataClassic(data, i);
-
-            stopwatch.Stop();
-
-            if (!classificationCounts.ContainsKey(classification))
-                classificationCounts[classification] = 0;
-            classificationCounts[classification]++;
-        }
-
-        return classification;
-        //FormatAnalysisResults(filePath, data.Length, iterations, classificationCounts, totalTimeMs, verbose);
-    }
-    //static void FormatAnalysisResults(string filePath, int totalBytes, int iterations, Dictionary<string, int> classificationCounts, long totalTimeMs, bool verbose)
-    //{
-    //    Console.WriteLine("\n===== Analysis Results =====");
-    //    Console.WriteLine($"Analyzing: {filePath} ({totalBytes} bytes)");
-    //    Console.WriteLine($"Iterations: {iterations}\n");
-
-    //    foreach (var entry in classificationCounts.OrderByDescending(kv => kv.Value))
-    //    {
-    //        Console.WriteLine($"- {entry.Key}: {entry.Value} times");
-    //    }
-
-    //    Console.WriteLine($"\nAverage Execution Time: {totalTimeMs / (double)iterations:F4} ms");
-    //}
-    private static double ComputeEntropy(byte[] data)
-    {
-        var counts = new int[256];
-        foreach (var b in data) counts[b]++;
-        double entropy = 0;
-        foreach (var count in counts)
-        {
-            if (count == 0) continue;
-            var probability = count / (double)data.Length;
-            entropy -= probability * Math.Log2(probability);
-        }
-
-        return entropy;
-    }
-
-    private static double ComputeUniqueness(byte[] data)
-    {
-        return data.Distinct().Count() / (double)data.Length;
-    }
-
-    private static double ComputePeriodicity(byte[] data)
-    {
-        var periodicityCount = 0;
-        for (var i = 0; i < data.Length - 1; i++)
-            if (data[i] == data[i + 1])
-                periodicityCount++;
-        return periodicityCount / (double)data.Length;
-    }
-
-    private static double ComputeByteDeviation(byte[] data)
-    {
-        var counts = new int[256];
-        foreach (var b in data) counts[b]++;
-        var avg = counts.Average();
-        var stddev = Math.Sqrt(counts.Average(x => Math.Pow(x - avg, 2)));
-        return stddev / avg;
-    }
-
-    private static double ComputeSlidingWindowSimilarity(byte[] data)
-    {
-        int matchCount = 0, totalCount = 0;
-        for (var i = 0; i < data.Length - 8; i += 8)
-        {
-            if (data[i] == data[i + 4]) matchCount++;
-            totalCount++;
-        }
-
-        return matchCount / (double)totalCount;
-    }
-
-    private static bool IsSequenceData(byte[] window)
-    {
-        if (window == null || window.Length < 3) // Need at least 3 bytes
-            return false;
-
-        // Calculate the initial stride, handling potential overflow/underflow.
-        var stride = (window[1] - window[0] + 256) % 256;
-
-        // Stride of 0 is NOT a sequence (all bytes the same).
-        if (stride == 0)
-            return false;
-
-        const int strideTolerance = 2; // Allow stride variations up to ±2
-
-        // Check for consistent stride across the entire window.
-        for (var i = 2; i < window.Length; i++)
-        {
-            var currentStride = (window[i] - window[i - 1] + 256) % 256;
-            if (Math.Abs(currentStride - stride) >
-                strideTolerance) return false; // Inconsistent stride beyond allowed tolerance
-        }
-
-        return true; // Consistent stride found within tolerance
-    }
-
-    private static double ComputePercentAlphaAndWhite(byte[] data)
-    {
-        var count = data.Count(b => (b >= 'a' && b <= 'z') || b == ' ');
-        return count / (double)data.Length;
-    }
-
-    private static double ComputeRLECompressionRatio(byte[] data)
-    {
-        if (data.Length == 0) return 1.0; // Avoid division by zero
-
-        List<(byte value, int count)> rleEncoded = new();
-        var lastByte = data[0];
-        var count = 1;
-
-        for (var i = 1; i < data.Length; i++)
-            if (data[i] == lastByte)
+            if (ProfileMatchCache.TryGetValue(cacheKey, out var cachedProfile))
             {
-                count++;
+                CacheOrder.Remove(cacheKey);
+                CacheOrder.AddFirst(cacheKey);
+                return cachedProfile;
             }
-            else
-            {
-                rleEncoded.Add((lastByte, count));
-                lastByte = data[i];
-                count = 1;
-            }
+        }
 
-        rleEncoded.Add((lastByte, count)); // Final sequence
+        var options = new CryptoLibOptions(
+            salt: MangoSalt
+        );
+        var analysisCore = new CryptoAnalysisCore(weightMode);
+        var cryptoLib = new CryptoLib(password, options);
 
-        double compressedSize = rleEncoded.Count * 2; // Each entry = (byte, count)
-        return compressedSize / data.Length; // RLE Compression Ratio
-    }
+        string bestMatch = fallbackProfile;
+        double bestScore = 0;
 
-    private static (string classification, double randomScore, double naturalScore) Score(double avgEntropy,
-        double avgUniqueness, double avgByteDeviation, double avgPeriodicity, double avgSlidingWindow)
-    {
-        double randomScore = 0, naturalScore = 0;
-
-        // Entropy Contribution (Boost Random if >7.0, Override Natural if >7.2)
-        randomScore += Math.Min(1.5, (avgEntropy - 7.0) / 0.4); // Boosts when >7.0, caps at 1.5
-        naturalScore += Math.Max(0.0, (6.5 - avgEntropy) / 0.5); // Penalizes if entropy <6.5
-
-        // Strong override: If entropy is >7.2, random wins outright
-        if (avgEntropy > 7.2) naturalScore = 0;
-
-        // Uniqueness Contribution
-        randomScore += Math.Min(1.0, avgUniqueness / 0.9); // High uniqueness → favors random
-
-        // Byte Deviation Contribution
-        randomScore += 1.0 - Math.Min(1.0, avgByteDeviation / 0.5); // Adjusted threshold
-
-        // Periodicity Contribution
-        naturalScore += Math.Min(1.0, avgPeriodicity / 0.07); // Loosened sensitivity
-
-        // Sliding Window Contribution
-        naturalScore += Math.Min(1.0, avgSlidingWindow / 0.07); // Loosened threshold
-
-        // Normalize scores (keep it between 0 and 1)
-        randomScore = Math.Min(1.0, Math.Max(0.0, randomScore));
-        naturalScore = Math.Min(1.0, Math.Max(0.0, naturalScore));
-
-        // Determine classification
-        var classification = randomScore >= 0.8 ? "Random/Encrypted" :
-            naturalScore >= 0.8 ? "Natural" :
-            "Combined";
-
-        return (classification, randomScore, naturalScore);
-    }
-
-    private static (string classification, double avgEntropy, double avgUniqueness, double avgByteDeviation, double
-        avgPeriodicity, double avgSlidingWindow, Dictionary<int, (double, double, double, double, double)>?
-        windowResults) AnalyzeDataClassic(byte[] data, int iteration)
-    {
-        const int sampleSize = 4096;
-        var random = new Random();
-        List<byte[]> samples = new()
+        foreach (var (name, profile) in BestProfiles)
         {
-            data!.Take(Math.Min(sampleSize, data!.Length)).ToArray(), // Start
-            data.Skip(Math.Max(0, data.Length / 2 - sampleSize / 2)).Take(sampleSize).ToArray(), // Middle
-            data.Skip(Math.Max(0, data.Length - sampleSize)).Take(sampleSize).ToArray(), // End
-            data.OrderBy(_ => random.Next()).Take(sampleSize).ToArray() // Random bytes
-        };
+            // 📛 Filter profiles by performance mode
+            if (performance == EncryptionPerformanceMode.Fast && name.EndsWith(".Best", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (performance == EncryptionPerformanceMode.Best && name.EndsWith(".Fast", StringComparison.OrdinalIgnoreCase))
+                continue;
 
-        var avgEntropy = samples.Average(ComputeEntropy);
-        var avgUniqueness = samples.Average(ComputeUniqueness);
-        var avgPeriodicity = samples.Average(ComputePeriodicity);
-        var avgByteDeviation = samples.Average(ComputeByteDeviation);
-        var avgSlidingWindow = samples.Average(ComputeSlidingWindowSimilarity);
+            var encrypted = cryptoLib.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+            var payload = cryptoLib.GetPayloadOnly(encrypted);
 
-        var (classification, _, _) =
-            Score(avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow);
+            var (avalanche, keydep) = ProcessAvalancheAndKeyDependency(cryptoLib, input, password, profile);
 
-        return (classification, avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow, null);
+            var results = analysisCore.RunCryptAnalysis(payload, avalanche, keydep, input);
+            var score = analysisCore.CalculateAggregateScore(results, scoringMode);
+
+            if (score >= profile.AggregateScore * tolerance && score > bestScore)
+            {
+                bestMatch = name;
+                bestScore = score;
+            }
+        }
+
+        lock (CacheLock)
+        {
+            ProfileMatchCache[cacheKey] = bestMatch;
+            CacheOrder.AddFirst(cacheKey);
+            if (CacheOrder.Count > CacheCapacity)
+            {
+                var oldest = CacheOrder.Last!;
+                ProfileMatchCache.Remove(oldest.Value);
+                CacheOrder.RemoveLast();
+            }
+        }
+
+        return bestMatch;
     }
 
-    #region AnalyzeDataMSM
-
-    private enum State
+    private class ByteArrayComparer : IEqualityComparer<byte[]>
     {
-        START,
-        CHECK_ALPHA_WHITE,
-        CHECK_ENTROPY,
-        CHECK_RLE,
-        FULL_ANALYSIS,
-        CLASSIFY_NATURAL,
-        CLASSIFY_RANDOM,
-        CHECK_SEQUENCE,
-        CLASSIFY_OTHER
+        public static readonly ByteArrayComparer Instance = new();
+
+        public bool Equals(byte[]? x, byte[]? y) =>
+            x != null && y != null && x.SequenceEqual(y);
+
+        public int GetHashCode(byte[] obj)
+        {
+            unchecked
+            {
+                int hash = 17;
+                foreach (var b in obj)
+                    hash = hash * 31 + b;
+                return hash;
+            }
+        }
     }
 
-    private static (string classification, double avgEntropy, double avgUniqueness, double avgByteDeviation, double
-        avgPeriodicity, double avgSlidingWindow,
-        Dictionary<int, (double, double, double, double, double, double, double)>? windowResults) AnalyzeDataMSM(
-            byte[] data, int iteration, bool verbose)
+    
+    private static string ClassificationWorker(byte[] data)
     {
-        var dataSize = data!.Length;
-        var windowSize = Math.Min(1024, dataSize); // If file is smaller than default, adjust window size
-        var stepSize = 512;
-        Dictionary<int, (double, double, double, double, double, double, double)> windowResults = new();
-
-        // === Integration Before FSM ===
         var fileType = KnownFileType(data);
-        if (fileType != "Unknown")
-        {
-            var classification = "Other"; // Default for structured file types
-
-            switch (fileType)
-            {
-                case "HTML":
-                case "TXT":
-                case "CSV":
-                case "XML":
-                case "SQL":
-                case "SVG":
-                    classification = "Natural";
-                    break;
-
-                case "JPG":
-                case "PNG":
-                case "GIF":
-                case "BMP":
-                case "MP4":
-                case "MKV":
-                case "MP3":
-                case "WAV":
-                    classification = "Media";
-                    break;
-
-                case "ZIP":
-                case "RAR":
-                case "7Z":
-                case "GZ":
-                    classification = "Random/Encrypted";
-                    break;
-
-                case "EXE":
-                case "DLL":
-                case "ISO":
-                case "PDF":
-                    classification = "Other";
-                    break;
-            }
-
-            if (iteration == 0)
-                Console.WriteLine($"[Known File Type Detected] {fileType} → Classified as {classification}");
-            return (classification, 0, 0, 0, 0, 0, null);
-        }
-
-        List<int> sampleOffsets = new() { 0, dataSize - windowSize, dataSize / 2 };
-        for (var i = 1; i <= 2; i++)
-        {
-            var nextStart = i * windowSize;
-            var nextEnd = dataSize - (i + 1) * windowSize;
-            if (nextStart + windowSize <= dataSize) sampleOffsets.Add(nextStart);
-            if (nextEnd >= 0) sampleOffsets.Add(nextEnd);
-        }
-
-        Dictionary<string, int> classificationStreak = new();
-        int sequenceWindows = 0, randomWindows = 0, naturalWindows = 0, combinedWindows = 0;
-
-        for (var start = 0; start + windowSize <= data.Length; start += stepSize)
-        {
-            var window = data.Skip(start).Take(windowSize).ToArray();
-
-
-            double alphaWhite = 0.0, entropy = 0.0, rleRatio = 1.0;
-            double periodicity = 0.0, uniqueness = 0.0, byteDeviation = 0.0, slidingWindow = 0.0;
-
-            var done = false;
-            var state = State.START;
-
-            while (!done)
-                switch (state)
-                {
-                    case State.START:
-                        state = State.CHECK_SEQUENCE;
-                        break;
-
-                    case State.CHECK_SEQUENCE:
-                        if (IsSequenceData(window)) sequenceWindows++;
-                        combinedWindows++;
-                        state = State.CHECK_ALPHA_WHITE;
-                        break;
-
-                    case State.CHECK_ALPHA_WHITE:
-                        alphaWhite = ComputePercentAlphaAndWhite(window);
-                        if (alphaWhite > 0.90)
-                        {
-                            state = State.CLASSIFY_NATURAL;
-                            naturalWindows++;
-                            break;
-                        }
-
-                        if (alphaWhite < 10)
-                        {
-                            state = State.CHECK_ENTROPY;
-                            break;
-                        }
-
-                        state = State.CHECK_ENTROPY;
-                        break;
-
-                    case State.CHECK_ENTROPY:
-                        entropy = ComputeEntropy(window);
-                        if (entropy > 7.5)
-                        {
-                            state = State.CLASSIFY_RANDOM;
-                            randomWindows++;
-                            break;
-                        }
-
-                        if (entropy < 6.5)
-                        {
-                            state = State.CLASSIFY_NATURAL;
-                            naturalWindows++;
-                            break;
-                        }
-
-                        state = State.CHECK_RLE;
-                        break;
-
-                    case State.CHECK_RLE:
-                        rleRatio = ComputeRLECompressionRatio(window);
-                        if (rleRatio <= 0.5)
-                        {
-                            state = State.CLASSIFY_NATURAL;
-                            naturalWindows++;
-                            break;
-                        }
-
-                        state = State.FULL_ANALYSIS;
-                        break;
-
-                    case State.FULL_ANALYSIS:
-                        periodicity = ComputePeriodicity(window);
-                        uniqueness = ComputeUniqueness(window);
-                        byteDeviation = ComputeByteDeviation(window);
-                        slidingWindow = ComputeSlidingWindowSimilarity(window);
-                        state = State.CLASSIFY_OTHER;
-                        break;
-
-                    case State.CLASSIFY_NATURAL:
-                    case State.CLASSIFY_RANDOM:
-                    case State.CLASSIFY_OTHER:
-                        done = true;
-                        break;
-                }
-
-            // ✅ Always store results for the processed window before moving to the next one
-            windowResults[start] = (entropy, periodicity, uniqueness, byteDeviation, slidingWindow, rleRatio,
-                alphaWhite);
-        }
-
-        var avgEntropy = windowResults.Values.Average(v => v.Item1);
-        var avgPeriodicity = windowResults.Values.Average(v => v.Item2);
-        var avgUniqueness = windowResults.Values.Average(v => v.Item3);
-        var avgByteDeviation = windowResults.Values.Average(v => v.Item4);
-        var avgSlidingWindow = windowResults.Values.Average(v => v.Item5);
-
-        // === Combined Classification Rules (Refined) ===
-
-        // 1. Calculate weighted scores (as before, but no combinedScore yet).
-        var sequenceScore = sequenceWindows * 3.0; // Sequence gets highest weight
-        var randomScore = randomWindows * 1.0;
-        var naturalScore = naturalWindows * 2.0; // Natural is in the middle
-
-        // 2. Determine the dominant classification (if any).
-        var dominantClassification = "Other"; // Default
-        var dominantScore = 0.0;
-
-        if (sequenceScore >= randomScore && sequenceScore >= naturalScore && sequenceScore > 0)
-        {
-            dominantClassification = "Sequence";
-            dominantScore = sequenceScore;
-        }
-        else if (naturalScore >= randomScore && naturalScore > 0)
-        {
-            dominantClassification = "Natural";
-            dominantScore = naturalScore;
-        }
-        else if (randomScore > 0)
-        {
-            dominantClassification = "Random/Encrypted";
-            dominantScore = randomScore;
-        }
-
-        // Calculate totalWindows outside the call to IsCombinedData
-        var totalWindows = sequenceWindows + randomWindows + naturalWindows;
-
-        // 3. Check for Combined Data.  Pass totalWindows!
-        if (IsCombinedData(sequenceWindows, randomWindows, naturalWindows, combinedWindows, totalWindows, sequenceScore,
-                randomScore, naturalScore, avgEntropy))
-            return ("Combined", avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow,
-                windowResults);
-
-        //var (classification, _, _) = Score(avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow);
-
-        // 4. If not combined, return the dominant classification (or "Other" if none).
-        return (dominantClassification, avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow,
-            windowResults);
+        var classification = RemapFileType(data, fileType);
+        return classification;
     }
+    private static string RemapFileType(byte[] data, string fileType)
+    {
+        switch (fileType)
+        {
+            case "HTML":
+            case "TXT":
+            case "CSV":
+            case "XML":
+            case "SQL":
+            case "SVG":
+                return "Natural";
 
-    // === Step 1: Known File Type Check (Instant Classification) ===
+            case "JPG":
+            case "PNG":
+            case "GIF":
+            case "BMP":
+            case "MP4":
+            case "MKV":
+            case "MP3":
+            case "WAV":
+                return "Media";
+
+            case "ZIP":
+            case "RAR":
+            case "7Z":
+            case "GZ":
+                return "Random/Encrypted";
+
+            case "EXE":
+            case "DLL":
+            case "ISO":
+            case "PDF":
+                return "Other";
+
+            default:
+                var alphaWhite = ComputePercentAlphaNumericPunct(data);
+                if (alphaWhite > 0.90)
+                    return "Natural";
+
+                return "Other";
+        }
+    }
     private static string KnownFileType(byte[] data)
     {
         if (data!.Length < 4) return "Unknown";
@@ -661,40 +289,110 @@ public class InputProfiler
 
         return "Unknown";
     }
-
-    private static bool IsCombinedData(int sequenceWindows, int randomWindows, int naturalWindows, int combinedWindows,
-        int totalWindows, double sequenceScore, double randomScore, double naturalScore, double avgEntropy)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static double ComputePercentAlphaNumericPunct(byte[] data)
     {
-        // 1. Require a minimum proportion of "combinable" windows.
-        // 🔹 Adaptive threshold for Combined classification
-        var adaptiveCombinedThreshold = avgEntropy > 7.5 ? 0.55 : 0.40; // Stricter for high entropy, looser for low
-        if (combinedWindows < totalWindows * adaptiveCombinedThreshold && totalWindows > 0) return false;
+        int count = 0;
+        foreach (var b in data)
+        {
+            if ((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || // Alphabetic
+                (b >= '0' && b <= '9') ||                           // Numeric
+                (b == ' ' || b == '\t' || b == '\n' || b == '\r') || // Whitespace
+                (b >= 33 && b <= 47) || (b >= 58 && b <= 64) ||      // Punctuation ranges
+                (b >= 91 && b <= 96) || (b >= 123 && b <= 126))
+            {
+                count++;
+            }
+        }
 
-        const double sequenceConfidenceFloor = 5.0; // Minimum required strength for Sequence to dominate
-        const double sequenceDominanceMargin = 0.2; // Adaptive margin
-
-        if (sequenceScore > sequenceConfidenceFloor &&
-            sequenceScore > randomScore + naturalScore + (randomScore + naturalScore) * sequenceDominanceMargin)
-            return false; // Sequence truly dominates
-
-        // 3. Check for dominance of other types (using counts).
-        const double dominanceThreshold = 0.8;
-        if (naturalWindows > totalWindows * dominanceThreshold) return false;
-        if (randomWindows > totalWindows * dominanceThreshold) return false;
-
-        // 4. Require at least two types to be *present* in significant amounts.
-        var numSignificantTypes = 0;
-        const double significantTypeThreshold = 0.1;
-        var relevantTotal = combinedWindows > 0 ? combinedWindows : totalWindows;
-
-        if (sequenceWindows >= totalWindows * significantTypeThreshold) numSignificantTypes++;
-        if (naturalWindows >= relevantTotal * significantTypeThreshold) numSignificantTypes++;
-        if (randomWindows >= relevantTotal * significantTypeThreshold) numSignificantTypes++;
-
-        if (numSignificantTypes < 2) return false;
-
-        return true; // Meets the criteria for combined data
+        return count / (double)data.Length;
     }
 
-    #endregion AnalyzeDataMSM
+    private static readonly Dictionary<string, InputProfile> BestProfiles = new();
+    private static volatile bool _profilesLoaded;
+    private static readonly object ProfilesLock = new object();
+    private static void EnsureProfilesLoaded()
+    {
+        if (!_profilesLoaded)
+        {
+            lock (ProfilesLock)
+            {
+                if (!_profilesLoaded)
+                {
+                    var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+                    if (!File.Exists(path))
+                        throw new FileNotFoundException("Required InputProfiles.json file is missing.", path);
+
+                    var json = File.ReadAllText(path);
+                    var rawDict = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
+                    if (rawDict != null)
+                    {
+                        foreach (var (name, dto) in rawDict)
+                        {
+                            var sequence = dto.Sequence
+                                .Select(pair =>
+                                {
+                                    if (pair.Count != 2)
+                                        throw new InvalidDataException($"Invalid tuple in sequence for profile '{name}'");
+
+                                    return (ID: pair[0], TR: pair[1]);
+                                })
+                                .ToArray();
+
+                            BestProfiles[name] = new InputProfile(name, sequence, dto.GlobalRounds, dto.AggregateScore);
+                        }
+                    }
+
+                    _profilesLoaded = true;
+                }
+            }
+
+        }
+    }
+    public class InputProfileDto
+    {
+        public List<List<byte>> Sequence { get; set; } = new();
+        public int GlobalRounds { get; set; }
+        public double AggregateScore { get; set; }
+    }
+    public static void RefreshProfiles()
+    {
+        lock (ProfilesLock)
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+            if (!File.Exists(path))
+                throw new FileNotFoundException("Required InputProfiles.json file is missing.", path);
+
+            var json = File.ReadAllText(path);
+            var rawDict = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
+
+            if (rawDict == null)
+                throw new InvalidDataException("Failed to deserialize InputProfiles.json: result was null.");
+
+            BestProfiles.Clear();
+
+            foreach (var (name, dto) in rawDict)
+            {
+                var sequence = dto.Sequence
+                    .Select(pair =>
+                    {
+                        if (pair.Count != 2)
+                            throw new InvalidDataException($"Invalid tuple in sequence for profile '{name}'");
+
+                        return (ID: pair[0], TR: pair[1]);
+                    })
+                    .ToArray();
+
+                BestProfiles[name] = new InputProfile(name, sequence, dto.GlobalRounds, dto.AggregateScore);
+            }
+
+            _profilesLoaded = true;
+
+            lock (CacheLock)
+            {
+                ProfileMatchCache.Clear();
+                CacheOrder.Clear();
+            }
+        }
+    }
 }

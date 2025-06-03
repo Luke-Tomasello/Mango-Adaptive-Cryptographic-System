@@ -7,4 +7,16 @@
     <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
 
+  <ItemGroup>
+    <None Remove="InputProfiles.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CryptoAnalysisCore\CryptoAnalysisCore.csproj" />
+    <ProjectReference Include="..\CryptoLib\CryptoLib.csproj" />
+    <ProjectReference Include="..\MangoCommon\MangoCommon.csproj" />
+  </ItemGroup>
+
+  
+
 </Project>
