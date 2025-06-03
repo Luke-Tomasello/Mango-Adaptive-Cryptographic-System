@@ -361,3 +361,8 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/AesSoftwareCore/bin/Debug/net8.0
+/AesSoftwareCore/bin/Release/net8.0
+/CryptoAnalysisCore/bin/Debug/net8.0
+/CryptoAnalysisCore/bin/Release/net8.0
+/MangoCommon/bin/Debug/net8.0
