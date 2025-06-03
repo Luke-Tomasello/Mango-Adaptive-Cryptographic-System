@@ -1,202 +1,252 @@
 [
   {
-    "Name": "XORTx",
-    "Id": 1,
-    "TimePerOpMs": 0.09361901960784313
-  },
-  {
-    "Name": "BitRandFlipTx",
-    "Id": 2,
-    "TimePerOpMs": 0.28383901960784313
-  },
-  {
     "Name": "PassthroughTx",
     "Id": 3,
-    "TimePerOpMs": 0.004358039215686275
+    "TimePerOpMs": 0.0008427450980392156
   },
   {
-    "Name": "ShuffleBitsFwdTx",
-    "Id": 4,
-    "TimePerOpMs": 0.9170470588235294
-  },
-  {
-    "Name": "ShuffleBitsInvTx",
-    "Id": 5,
-    "TimePerOpMs": 0.9382680392156864
-  },
-  {
-    "Name": "MaskedDoubleSubFwdTx",
-    "Id": 6,
-    "TimePerOpMs": 0.07543980392156863
-  },
-  {
-    "Name": "MaskedDoubleSubInvTx",
-    "Id": 7,
-    "TimePerOpMs": 0.06388431372549021
-  },
-  {
-    "Name": "ButterflyTx",
-    "Id": 8,
-    "TimePerOpMs": 0.00826235294117647
-  },
-  {
-    "Name": "SubBytesXorMaskFwdTx",
-    "Id": 9,
-    "TimePerOpMs": 0.06890411764705881
-  },
-  {
-    "Name": "SubBytesXorMaskInvTx",
-    "Id": 10,
-    "TimePerOpMs": 0.06219254901960784
-  },
-  {
-    "Name": "SubBytesFwdTx",
-    "Id": 11,
-    "TimePerOpMs": 0.00811392156862745
+    "Name": "AesSubBytesInvTx",
+    "Id": 44,
+    "TimePerOpMs": 0.0033666666666666667
   },
   {
     "Name": "SubBytesInvTx",
     "Id": 12,
-    "TimePerOpMs": 0.003837058823529412
+    "TimePerOpMs": 0.003421372549019608
   },
   {
-    "Name": "NibbleSwapShuffleFwdTx",
-    "Id": 13,
-    "TimePerOpMs": 0.09030117647058825
+    "Name": "SubBytesFwdTx",
+    "Id": 11,
+    "TimePerOpMs": 0.0034570588235294116
   },
   {
-    "Name": "NibbleSwapShuffleInvTx",
-    "Id": 14,
-    "TimePerOpMs": 0.07539078431372548
-  },
-  {
-    "Name": "ApplyMaskBasedMixingTx",
-    "Id": 15,
-    "TimePerOpMs": 0.07488627450980392
-  },
-  {
-    "Name": "MaskBasedSBoxFwdTx",
-    "Id": 16,
-    "TimePerOpMs": 0.06894784313725491
-  },
-  {
-    "Name": "MaskBasedSBoxInvTx",
-    "Id": 17,
-    "TimePerOpMs": 0.06267431372549019
-  },
-  {
-    "Name": "ShuffleNibblesFwdTx",
-    "Id": 18,
-    "TimePerOpMs": 0.1744719607843137
-  },
-  {
-    "Name": "ShuffleNibblesInvTx",
-    "Id": 19,
-    "TimePerOpMs": 0.16732392156862747
-  },
-  {
-    "Name": "ShuffleBytesFwdTx",
-    "Id": 20,
-    "TimePerOpMs": 0.08241156862745098
-  },
-  {
-    "Name": "ShuffleBytesInvTx",
-    "Id": 21,
-    "TimePerOpMs": 0.07861235294117647
-  },
-  {
-    "Name": "BitFlipCascadeTx",
-    "Id": 22,
-    "TimePerOpMs": 0.45723725490196077
-  },
-  {
-    "Name": "SlidingMaskOverlayTx",
-    "Id": 23,
-    "TimePerOpMs": 0.07362745098039217
-  },
-  {
-    "Name": "FrequencyEqualizerFwdTx",
-    "Id": 24,
-    "TimePerOpMs": 0.07216843137254902
-  },
-  {
-    "Name": "FrequencyEqualizerInvTx",
-    "Id": 25,
-    "TimePerOpMs": 0.07129274509803922
-  },
-  {
-    "Name": "MicroBlockShufflerFwdTx",
-    "Id": 26,
-    "TimePerOpMs": 0.10514529411764706
-  },
-  {
-    "Name": "MicroBlockShufflerInvTx",
-    "Id": 27,
-    "TimePerOpMs": 0.09857392156862745
-  },
-  {
-    "Name": "PatternEqualizerTx",
-    "Id": 28,
-    "TimePerOpMs": 0.1750043137254902
-  },
-  {
-    "Name": "ButterflyWithPairsFwdTx",
-    "Id": 29,
-    "TimePerOpMs": 0.011136274509803921
-  },
-  {
-    "Name": "ButterflyWithPairsInvTx",
-    "Id": 30,
-    "TimePerOpMs": 0.008940392156862745
-  },
-  {
-    "Name": "ButterflyWithRotationFwdTx",
-    "Id": 31,
-    "TimePerOpMs": 0.006806470588235294
-  },
-  {
-    "Name": "ButterflyWithRotationInvTx",
-    "Id": 32,
-    "TimePerOpMs": 0.007181372549019608
-  },
-  {
-    "Name": "BitFlipButterflyFwdTx",
-    "Id": 33,
-    "TimePerOpMs": 0.020071176470588235
-  },
-  {
-    "Name": "BitFlipButterflyInvTx",
-    "Id": 34,
-    "TimePerOpMs": 0.016319607843137254
-  },
-  {
-    "Name": "MaskedCascadeSubFwdFbTx",
-    "Id": 35,
-    "TimePerOpMs": 0.06627941176470589
-  },
-  {
-    "Name": "MaskedCascadeSubInvFbTx",
-    "Id": 36,
-    "TimePerOpMs": 0.06338450980392157
-  },
-  {
-    "Name": "MicroBlockSwapFwdTx",
-    "Id": 37,
-    "TimePerOpMs": 0.023881176470588236
+    "Name": "ButterflyTx",
+    "Id": 8,
+    "TimePerOpMs": 0.0045245098039215685
   },
   {
     "Name": "MicroBlockSwapInvTx",
     "Id": 38,
-    "TimePerOpMs": 0.019875882352941177
+    "TimePerOpMs": 0.006344901960784313
+  },
+  {
+    "Name": "MicroBlockSwapFwdTx",
+    "Id": 37,
+    "TimePerOpMs": 0.006445490196078431
+  },
+  {
+    "Name": "BitFlipButterflyFwdTx",
+    "Id": 33,
+    "TimePerOpMs": 0.006521960784313725
+  },
+  {
+    "Name": "ButterflyWithRotationInvTx",
+    "Id": 32,
+    "TimePerOpMs": 0.006545294117647059
+  },
+  {
+    "Name": "BitFlipButterflyInvTx",
+    "Id": 34,
+    "TimePerOpMs": 0.006622549019607843
+  },
+  {
+    "Name": "AesShiftRowsInvTx",
+    "Id": 42,
+    "TimePerOpMs": 0.006833725490196079
+  },
+  {
+    "Name": "ButterflyWithRotationFwdTx",
+    "Id": 31,
+    "TimePerOpMs": 0.006864705882352941
+  },
+  {
+    "Name": "AesShiftRowsFwdTx",
+    "Id": 41,
+    "TimePerOpMs": 0.007017058823529412
   },
   {
     "Name": "NibbleInterleaverTx",
     "Id": 39,
-    "TimePerOpMs": 0.015969803921568628
+    "TimePerOpMs": 0.007189803921568627
+  },
+  {
+    "Name": "CascadeSub3xRevTx",
+    "Id": 48,
+    "TimePerOpMs": 0.007219607843137256
+  },
+  {
+    "Name": "ButterflyWithPairsInvTx",
+    "Id": 30,
+    "TimePerOpMs": 0.007531372549019607
+  },
+  {
+    "Name": "ButterflyWithPairsFwdTx",
+    "Id": 29,
+    "TimePerOpMs": 0.007539411764705882
+  },
+  {
+    "Name": "AesSubBytesFwdTx",
+    "Id": 43,
+    "TimePerOpMs": 0.009598235294117647
+  },
+  {
+    "Name": "CascadeSub3xFwdTx",
+    "Id": 47,
+    "TimePerOpMs": 0.014101764705882354
   },
   {
     "Name": "ChunkedFbTx",
     "Id": 40,
-    "TimePerOpMs": 0.06822156862745099
+    "TimePerOpMs": 0.039335098039215685
+  },
+  {
+    "Name": "SubBytesXorMaskInvTx",
+    "Id": 10,
+    "TimePerOpMs": 0.0610378431372549
+  },
+  {
+    "Name": "MaskBasedSBoxFwdTx",
+    "Id": 16,
+    "TimePerOpMs": 0.06115274509803921
+  },
+  {
+    "Name": "MaskBasedSBoxInvTx",
+    "Id": 17,
+    "TimePerOpMs": 0.061358431372549024
+  },
+  {
+    "Name": "AdditiveScatterRevTx",
+    "Id": 50,
+    "TimePerOpMs": 0.061371176470588235
+  },
+  {
+    "Name": "SubBytesXorMaskFwdTx",
+    "Id": 9,
+    "TimePerOpMs": 0.061631960784313725
+  },
+  {
+    "Name": "MaskedDoubleSubInvTx",
+    "Id": 7,
+    "TimePerOpMs": 0.06216019607843137
+  },
+  {
+    "Name": "MaskedDoubleSubFwdTx",
+    "Id": 6,
+    "TimePerOpMs": 0.06239411764705882
+  },
+  {
+    "Name": "XORTx",
+    "Id": 1,
+    "TimePerOpMs": 0.06313039215686275
+  },
+  {
+    "Name": "MaskedCascadeSubFwdFbTx",
+    "Id": 35,
+    "TimePerOpMs": 0.06356313725490195
+  },
+  {
+    "Name": "MaskedCascadeSubInvFbTx",
+    "Id": 36,
+    "TimePerOpMs": 0.06429745098039216
+  },
+  {
+    "Name": "AdditiveScatterFwdTx",
+    "Id": 49,
+    "TimePerOpMs": 0.06925235294117647
+  },
+  {
+    "Name": "FrequencyEqualizerInvTx",
+    "Id": 25,
+    "TimePerOpMs": 0.07164019607843136
+  },
+  {
+    "Name": "ShuffleBytesInvTx",
+    "Id": 21,
+    "TimePerOpMs": 0.07173156862745098
+  },
+  {
+    "Name": "ShuffleBytesFwdTx",
+    "Id": 20,
+    "TimePerOpMs": 0.07321470588235293
+  },
+  {
+    "Name": "FrequencyEqualizerFwdTx",
+    "Id": 24,
+    "TimePerOpMs": 0.07374568627450981
+  },
+  {
+    "Name": "ApplyMaskBasedMixingTx",
+    "Id": 15,
+    "TimePerOpMs": 0.07408980392156864
+  },
+  {
+    "Name": "NibbleSwapShuffleFwdTx",
+    "Id": 13,
+    "TimePerOpMs": 0.07536941176470588
+  },
+  {
+    "Name": "NibbleSwapShuffleInvTx",
+    "Id": 14,
+    "TimePerOpMs": 0.07588058823529412
+  },
+  {
+    "Name": "SlidingMaskOverlayTx",
+    "Id": 23,
+    "TimePerOpMs": 0.08761941176470589
+  },
+  {
+    "Name": "MicroBlockShufflerInvTx",
+    "Id": 27,
+    "TimePerOpMs": 0.09533274509803921
+  },
+  {
+    "Name": "MicroBlockShufflerFwdTx",
+    "Id": 26,
+    "TimePerOpMs": 0.09685215686274509
+  },
+  {
+    "Name": "AesMixColumnsInvTx",
+    "Id": 46,
+    "TimePerOpMs": 0.12725
+  },
+  {
+    "Name": "AesMixColumnsFwdTx",
+    "Id": 45,
+    "TimePerOpMs": 0.1486078431372549
+  },
+  {
+    "Name": "ShuffleNibblesInvTx",
+    "Id": 19,
+    "TimePerOpMs": 0.17299039215686274
+  },
+  {
+    "Name": "ShuffleNibblesFwdTx",
+    "Id": 18,
+    "TimePerOpMs": 0.17397588235294117
+  },
+  {
+    "Name": "PatternEqualizerTx",
+    "Id": 28,
+    "TimePerOpMs": 0.18022627450980394
+  },
+  {
+    "Name": "BitRandFlipTx",
+    "Id": 2,
+    "TimePerOpMs": 0.24109098039215687
+  },
+  {
+    "Name": "BitFlipCascadeTx",
+    "Id": 22,
+    "TimePerOpMs": 0.5152490196078432
+  },
+  {
+    "Name": "ShuffleBitsFwdTx",
+    "Id": 4,
+    "TimePerOpMs": 0.9390707843137256
+  },
+  {
+    "Name": "ShuffleBitsInvTx",
+    "Id": 5,
+    "TimePerOpMs": 0.9501958823529413
   }
 ]

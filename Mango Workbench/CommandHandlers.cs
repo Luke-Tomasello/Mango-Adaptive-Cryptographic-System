@@ -24,6 +24,7 @@
 
 using Mango.Adaptive;
 using Mango.Analysis;
+using Mango.AnalysisCore;
 using Mango.Cipher;
 using Mango.Reporting;
 using Mango.SQL;
@@ -34,9 +35,11 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using static Mango.Adaptive.InputProfiler;
+using static Mango.AnalysisCore.CryptoAnalysisCore;
 using static Mango.Utilities.TestInputGenerator;
 using static Mango.Utilities.UtilityHelpers;
-
+using Mango.Common;
 namespace Mango.Workbench;
 
 public partial class Handlers
@@ -48,6 +51,790 @@ public partial class Handlers
         Warning,
         Debug
     }
+
+    public static (string, ConsoleColor) Say(string[] args)
+    {
+        return (string.Join(" ", args).Trim(), ConsoleColor.Green);
+    }
+    public static (string, ConsoleColor) RunClassification(ExecutionEnvironment localEnv, string[] args)
+    {
+        var input = localEnv.Globals.Input;
+        var scoringMode = localEnv.Globals.ScoringMode;
+        const string password = GlobalsInstance.Password;
+        var cryptoLib = localEnv.Crypto; // 
+        var cryptoAnalysis = localEnv.CryptoAnalysis; // 
+
+        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        if (!File.Exists(path))
+            return ("⚠️ No profiles found.", ConsoleColor.Yellow);
+
+        var json = File.ReadAllText(path);
+        var rawProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
+        if (rawProfiles == null || rawProfiles.Count == 0)
+            return ("⚠️ No profiles found.", ConsoleColor.Yellow);
+
+        Console.WriteLine($"\n▶️  Running Classification for data type {localEnv.Globals.InputType}...\n");
+
+        var profileList = new List<(int Index, string Name, double Score, double TimeMs, InputProfile Profile)>();
+        int index = 1;
+
+        foreach (var (name, dto) in rawProfiles.OrderBy(kvp => kvp.Key))
+        {
+            var sequence = dto.Sequence.Select(pair => ((byte)pair[0], (byte)pair[1])).ToArray();
+            var profile = new InputProfile(name, sequence, dto.GlobalRounds, dto.AggregateScore);
+
+            try
+            {
+                var sw = Stopwatch.StartNew();
+                var encrypted = cryptoLib.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+                sw.Stop();
+
+                var payload = cryptoLib.GetPayloadOnly(encrypted);
+                // 🧪 Avalanche and Key Dependency
+                var (avalanche, _, keydep, _) = 
+                    ProcessAvalancheAndKeyDependency(cryptoLib, input, password, profile);
+
+                var results = cryptoAnalysis.RunCryptAnalysis(
+                    encryptedData: payload, 
+                    avalanchePayload: avalanche, 
+                    keyDependencyPayload: keydep, 
+                    inputData: input);
+
+                var score = cryptoAnalysis.CalculateAggregateScore(results, scoringMode);
+                
+                double elapsedMs = sw.Elapsed.TotalMilliseconds;
+
+                Console.WriteLine($"[{index}] {name,-20} Score: {score:F10}   in {elapsedMs:F2} ms");
+
+                profileList.Add((index, name, score, elapsedMs, profile));
+                index++;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Failed to score profile '{name}': {ex.Message}");
+            }
+        }
+
+        if (profileList.Count == 0)
+            return ("❌ No suitable profiles were scored.", ConsoleColor.Red);
+
+        var best = profileList.OrderByDescending(p => p.Score).First();
+        Console.WriteLine($"\n🏆 Best Match: {best.Name} (Score: {best.Score:F10})\n");
+
+        Console.WriteLine("Select a profile to use, or press Escape to cancel...");
+        int selectedIndex = SelectMenuOpt(1, (byte)profileList.Count);
+        if (selectedIndex == 0)
+            return ($"⚠️ No selection made.", ConsoleColor.Yellow);
+
+        var selected = profileList.First(p => p.Index == selectedIndex);
+        string baselineSequence = new SequenceHelper(localEnv.Crypto).FormattedSequence<string>(selected.Profile);
+        MangoConsole.CommandStack.Push("Say " + $"✅ Profile '{selected.Name}' selected.\n\n🔧 Next Steps:\n• Run Sequence             → Encrypt your input and view output\n• Run Comparative Analysis → Compare against AES and view metric scores\n• Run BTR                  → Optimize the sequence for even better results\n• Save Profile             → Store this as a named profile for reuse\n\n📌 Tip: Type 'help' to view all available commands.");
+        MangoConsole.CommandStack.Push("$" + baselineSequence);
+
+        return (null, ConsoleColor.Green)!;
+    }
+
+    #region Profile Management
+    public static (string, ConsoleColor) LoadProfile(ExecutionEnvironment localEnv, string[] args)
+    {
+        if (args.Length == 0)
+            return ("❌ Usage: Load Profile <name>", ConsoleColor.Red);
+
+        string profileName = string.Join(" ", args).Trim();
+        if (string.IsNullOrWhiteSpace(profileName))
+            return ("❌ Profile name cannot be empty.", ConsoleColor.Red);
+
+        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        if (!File.Exists(path))
+            return ("⚠️ No profiles found.", ConsoleColor.Yellow);
+
+        var json = File.ReadAllText(path);
+        var rawProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
+
+        // Re-key with case-insensitive comparison
+        var comparer = StringComparer.OrdinalIgnoreCase;
+        var profileMap = new Dictionary<string, InputProfileDto>(rawProfiles ?? new(), comparer);
+
+        if (!profileMap.TryGetValue(profileName, out var dto))
+            return ($"⚠️ Profile '{profileName}' not found.", ConsoleColor.Yellow);
+
+        var sequence = dto.Sequence.Select(pair => ((byte)pair[0], (byte)pair[1])).ToArray();
+        var profile = new InputProfile(profileName, sequence, dto.GlobalRounds, dto.AggregateScore);
+
+        // Format the sequence as a command-line ready string
+        string formatted = new SequenceHelper(localEnv.Crypto).FormattedSequence<string>(profile);
+
+        MangoConsole.CommandStack.Push("Say " +
+                                       $"✅ Profile '{profileName}' loaded successfully.\n\n🔧 Next Steps:\n" +
+                                       "• Run Sequence             → Encrypt your input and view output\n" +
+                                       "• Run Comparative Analysis → Compare against AES and view metric scores\n" +
+                                       "• Run BTR                  → Optimize the sequence for even better results\n" +
+                                       "• Save Profile             → Store this as a named profile for reuse\n\n" +
+                                       "📌 Tip: Type 'help' to view all available commands.");
+        MangoConsole.CommandStack.Push("$" + formatted);
+
+        return (null, ConsoleColor.Green)!;
+    }
+
+    public static (string, ConsoleColor) SaveProfile(ExecutionEnvironment localEnv, List<string> sequence, string[] args)
+    {
+        if (args.Length == 0)
+            return ("❌ Usage: Save Profile <name>", ConsoleColor.Red);
+
+        string profileName = string.Join(" ", args).Trim();
+        if (string.IsNullOrWhiteSpace(profileName))
+            return ("❌ Profile name cannot be empty.", ConsoleColor.Red);
+
+        var sequenceHelper = new SequenceHelper(localEnv.Crypto);
+        SequenceHelper.ParsedSequence parsed;
+
+        try
+        {
+            parsed = sequenceHelper.ParseSequenceFull(sequence);
+        }
+        catch (Exception ex)
+        {
+            return ($"❌ Failed to parse current sequence: {ex.Message}", ConsoleColor.Red);
+        }
+
+        if (!parsed.SequenceAttributes.TryGetValue("GR", out string? grStr) || !int.TryParse(grStr, out int globalRounds))
+        {
+            // Profiles must explicitly define 'GR' (GlobalRounds) to avoid hidden dependencies.
+            // Falling back to a default based on InputType can introduce subtle, hard-to-detect bugs,
+            // especially when reloading, optimizing, or comparing profiles. Enforcing this requirement
+            // ensures profiles are fully self-describing, reproducible, and compatible with strict workflows.
+            return ("❌ Profile must explicitly specify 'GR' (GlobalRounds).", ConsoleColor.Red);
+        }
+
+        var transformSequence = parsed.Transforms.Select(t => (t.ID, (byte)t.TR)).ToArray();
+        var profile = InputProfiler.CreateInputProfile(profileName, transformSequence, globalRounds);
+
+        // Load existing profiles
+        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        var existingProfiles = new List<InputProfile>();
+
+        if (File.Exists(path))
+        {
+            try
+            {
+                var json = File.ReadAllText(path);
+                var rawProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
+
+                if (rawProfiles != null)
+                {
+                    existingProfiles = rawProfiles
+                        .Select(kvp =>
+                        {
+                            var sequence = kvp.Value.Sequence
+                                .Select(pair => ((byte)pair[0], (byte)pair[1]))
+                                .ToArray();
+
+                            return new InputProfile(kvp.Key, sequence, kvp.Value.GlobalRounds, kvp.Value.AggregateScore);
+                        })
+                        .ToList();
+                }
+            }
+            catch (Exception ex)
+            {
+                return ($"❌ Failed to load existing profiles: {ex.Message}", ConsoleColor.Red);
+            }
+        }
+
+
+        // Check for overwrite
+        if (existingProfiles.Any(p => p.Name.Equals(profileName, StringComparison.OrdinalIgnoreCase)))
+        {
+            if (!AskYN($"⚠️ Profile '{profileName}' already exists. Overwrite?"))
+                return ($"⚠️ Save aborted. Profile '{profileName}' was not overwritten.", ConsoleColor.Yellow);
+
+            existingProfiles = existingProfiles.Where(p => !p.Name.Equals(profileName, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+
+        #region Calc Aggrate Score
+        // Run encryption to calculate AggregateScore
+        var crypto = localEnv.Crypto;
+        var input = localEnv.Globals.Input;
+
+        var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+        var payload = crypto.GetPayloadOnly(encrypted);
+
+        var (avalanche, _, keydep, _) =
+            ProcessAvalancheAndKeyDependency(crypto, input, GlobalsInstance.Password, profile);
+
+        var analysis = localEnv.CryptoAnalysis.RunCryptAnalysis(payload, avalanche, keydep, input);
+
+        var aggregateScore = localEnv.CryptoAnalysis.CalculateAggregateScore(analysis, localEnv.Globals.ScoringMode);
+
+        // Update the profile object
+        profile = profile with { AggregateScore = aggregateScore };
+        #endregion Calc Aggrate Score
+
+        existingProfiles.Add(profile);
+
+        try
+        {
+            // Convert InputProfiles to InputProfileDto
+            var dtoDict = existingProfiles.ToDictionary(
+                kvp => kvp.Name,
+                kvp => new InputProfileDto
+                {
+                    Sequence = kvp.Sequence
+                        .Select(pair => new List<byte> { pair.ID, pair.TR })
+                        .ToList(),
+                    GlobalRounds = kvp.GlobalRounds,
+                    AggregateScore = kvp.AggregateScore
+                }
+            );
+
+            var updatedJson = JsonSerializer.Serialize(dtoDict, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(path, updatedJson);
+        }
+        catch (Exception ex)
+        {
+            return ($"❌ Failed to save profile: {ex.Message}", ConsoleColor.Red);
+        }
+
+        RefreshProfiles();
+        return ($"✅ Profile '{profileName}' saved successfully.", ConsoleColor.Green);
+    }
+
+    public static (string, ConsoleColor) ReplaceProfile(ExecutionEnvironment localEnv, List<string> sequence, string[] args)
+    {
+        if (args.Length == 0)
+            return ("❌ Usage: Replace Profile <name>", ConsoleColor.Red);
+
+        string profileName = string.Join(" ", args).Trim();
+        if (string.IsNullOrWhiteSpace(profileName))
+            return ("❌ Profile name cannot be empty.", ConsoleColor.Red);
+
+        var sequenceHelper = new SequenceHelper(localEnv.Crypto);
+        SequenceHelper.ParsedSequence parsed;
+
+        try
+        {
+            parsed = sequenceHelper.ParseSequenceFull(sequence);
+        }
+        catch (Exception ex)
+        {
+            return ($"❌ Failed to parse current sequence: {ex.Message}", ConsoleColor.Red);
+        }
+
+        if (!parsed.SequenceAttributes.TryGetValue("GR", out string? grStr) || !int.TryParse(grStr, out int globalRounds))
+            return ("❌ Profile must explicitly specify 'GR' (GlobalRounds).", ConsoleColor.Red);
+
+        var transformSequence = parsed.Transforms.Select(t => (t.ID, (byte)t.TR)).ToArray();
+        var profile = InputProfiler.CreateInputProfile(profileName, transformSequence, globalRounds);
+
+        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        var existingProfiles = new List<InputProfile>();
+
+        if (File.Exists(path))
+        {
+            try
+            {
+                var json = File.ReadAllText(path);
+                var rawProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
+
+                if (rawProfiles != null)
+                {
+                    existingProfiles = rawProfiles
+                        .Select(kvp =>
+                        {
+                            var sequence = kvp.Value.Sequence
+                                .Select(pair => ((byte)pair[0], (byte)pair[1]))
+                                .ToArray();
+
+                            return new InputProfile(kvp.Key, sequence, kvp.Value.GlobalRounds, kvp.Value.AggregateScore);
+                        })
+                        .Where(p => !p.Name.Equals(profileName, StringComparison.OrdinalIgnoreCase)) // ← always remove old
+                        .ToList();
+                }
+            }
+            catch (Exception ex)
+            {
+                return ($"❌ Failed to load existing profiles: {ex.Message}", ConsoleColor.Red);
+            }
+        }
+
+        #region Calc Aggregate Score
+        var crypto = localEnv.Crypto;
+        var input = localEnv.Globals.Input;
+
+        var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+        var payload = crypto.GetPayloadOnly(encrypted);
+
+        var (avalanche, _, keydep, _) =
+            ProcessAvalancheAndKeyDependency(crypto, input, GlobalsInstance.Password, profile);
+
+        var analysis = localEnv.CryptoAnalysis.RunCryptAnalysis(payload, avalanche, keydep, input);
+        var aggregateScore = localEnv.CryptoAnalysis.CalculateAggregateScore(analysis, localEnv.Globals.ScoringMode);
+        profile = profile with { AggregateScore = aggregateScore };
+        #endregion
+
+        existingProfiles.Add(profile);
+
+        try
+        {
+            var dtoDict = existingProfiles.ToDictionary(
+                kvp => kvp.Name,
+                kvp => new InputProfileDto
+                {
+                    Sequence = kvp.Sequence
+                        .Select(pair => new List<byte> { pair.ID, pair.TR })
+                        .ToList(),
+                    GlobalRounds = kvp.GlobalRounds,
+                    AggregateScore = kvp.AggregateScore
+                }
+            );
+
+            var updatedJson = JsonSerializer.Serialize(dtoDict, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(path, updatedJson);
+        }
+        catch (Exception ex)
+        {
+            return ($"❌ Failed to replace profile: {ex.Message}", ConsoleColor.Red);
+        }
+
+        RefreshProfiles();
+        return ($"✅ Profile '{profileName}' replaced successfully.", ConsoleColor.Green);
+    }
+
+    public static (string, ConsoleColor) DeleteProfile(string[] args)
+    {
+        if (args.Length == 0)
+            return ("❌ Usage: Delete Profile <name>", ConsoleColor.Red);
+
+        string profileName = string.Join(" ", args).Trim();
+        if (string.IsNullOrWhiteSpace(profileName))
+            return ("❌ Profile name cannot be empty.", ConsoleColor.Red);
+
+        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        if (!File.Exists(path))
+            return ($"⚠️ No profiles found.", ConsoleColor.Yellow);
+
+        var json = File.ReadAllText(path);
+        var tempProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
+
+        // Wrap with case-insensitive comparer
+        var rawProfiles = tempProfiles != null
+            ? new Dictionary<string, InputProfileDto>(tempProfiles, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, InputProfileDto>(StringComparer.OrdinalIgnoreCase);
+
+        if (!rawProfiles.ContainsKey(profileName))
+            return ($"⚠️ Profile '{profileName}' does not exist.", ConsoleColor.Yellow);
+
+        rawProfiles.Remove(profileName);
+
+        var updatedJson = JsonSerializer.Serialize(rawProfiles, new JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, updatedJson);
+
+        RefreshProfiles();
+        return ($"✅ Profile '{profileName}' deleted successfully.", ConsoleColor.Green);
+    }
+    public static (string, ConsoleColor) RenameProfile(string[] args)
+    {
+        if (args.Length != 2)
+            return ("❌ Usage: Rename Profile <\"old name\"> <\"new name\">", ConsoleColor.Red);
+
+        string oldName = args[0].Trim();
+        string newName = string.Join(" ", args.Skip(1)).Trim();
+
+        if (string.IsNullOrWhiteSpace(oldName) || string.IsNullOrWhiteSpace(newName))
+            return ("❌ Profile names cannot be empty.", ConsoleColor.Red);
+
+        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        if (!File.Exists(path))
+            return ($"⚠️ No profiles found.", ConsoleColor.Yellow);
+
+        var json = File.ReadAllText(path);
+        var tempProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
+
+        var rawProfiles = tempProfiles != null
+            ? new Dictionary<string, InputProfileDto>(tempProfiles, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, InputProfileDto>(StringComparer.OrdinalIgnoreCase);
+
+        if (!rawProfiles.TryGetValue(oldName, out var profile))
+            return ($"⚠️ Profile '{oldName}' does not exist.", ConsoleColor.Yellow);
+
+        if (rawProfiles.ContainsKey(newName))
+            return ($"⚠️ A profile named '{newName}' already exists.", ConsoleColor.Yellow);
+
+        rawProfiles.Remove(oldName);
+        rawProfiles[newName] = profile;
+
+        var updatedJson = JsonSerializer.Serialize(rawProfiles, new JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, updatedJson);
+
+        RefreshProfiles();
+        return ($"✅ Profile renamed from '{oldName}' to '{newName}' successfully.", ConsoleColor.Green);
+    }
+
+    public static (string, ConsoleColor) ListProfiles(ExecutionEnvironment localEnv, string[] args)
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        if (!File.Exists(path))
+            return ("⚠️ No profiles found.", ConsoleColor.Yellow);
+
+        var json = File.ReadAllText(path);
+        var rawProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
+        if (rawProfiles == null || rawProfiles.Count == 0)
+            return ("⚠️ No profiles found.", ConsoleColor.Yellow);
+
+        string wildcard = args.Length == 0 ? "*" : string.Join(" ", args).Trim();
+        string pattern = "^" + Regex.Escape(wildcard)
+            .Replace(@"\*", ".*")
+            .Replace(@"\?", ".") + "$";
+
+        var regex = new Regex(pattern, RegexOptions.IgnoreCase);
+
+        var matchingProfiles = rawProfiles
+            .Where(kvp => regex.IsMatch(kvp.Key))
+            .OrderBy(kvp => kvp.Key)
+            .ToList();
+
+        if (matchingProfiles.Count == 0)
+            return ($"⚠️ No profiles matched pattern: \"{pattern}\"", ConsoleColor.Yellow);
+
+        foreach (var kvp in matchingProfiles)
+        {
+            var name = kvp.Key;
+            var dto = kvp.Value;
+
+            var sequence = dto.Sequence.Select(pair => ((byte)pair[0], (byte)pair[1])).ToArray();
+
+            var readable = string.Join(" -> ",
+                sequence.Select(p =>
+                    localEnv.Crypto.TransformRegistry.TryGetValue(p.Item1, out var info)
+                        ? $"{info.Name}(ID:{p.Item1})(TR:{p.Item2})"
+                        : $"Unknown(ID:{p.Item1})(TR:{p.Item2})"
+                ));
+
+            var structured = $"InputProfile(\"{name}\", new (byte, byte)[]\n    {{\n        {string.Join(",\n        ", sequence.Select(p => $"({p.Item1}, {p.Item2}), // {(localEnv.Crypto.TransformRegistry.TryGetValue(p.Item1, out var info) ? info.Name : "Unknown")}"))}\n    }}, {dto.GlobalRounds}, {dto.AggregateScore:F10})";
+
+            Console.WriteLine($"\n🧩 {name}");
+            Console.WriteLine(readable + $" | (GR:{dto.GlobalRounds})");
+            Console.WriteLine(structured);
+        }
+
+        PressAnyKey();
+
+        return ("✅ Profile list complete.", ConsoleColor.Green);
+    }
+
+    public static (string, ConsoleColor) TouchProfiles(ExecutionEnvironment parentEnv)
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "InputProfiles.json");
+        if (!File.Exists(path))
+            return ("⚠️ No profiles found.", ConsoleColor.Yellow);
+
+        var json = File.ReadAllText(path);
+        var rawProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
+        if (rawProfiles == null || rawProfiles.Count == 0)
+            return ("⚠️ No profiles found.", ConsoleColor.Yellow);
+
+        var updatedProfiles = new Dictionary<string, InputProfileDto>();
+        var transformRegistry = parentEnv.Crypto.TransformRegistry;
+
+        foreach (var kvp in rawProfiles.OrderBy(kvp => kvp.Key))
+        {
+            var fullName = kvp.Key;
+            var dto = kvp.Value;
+            var sequence = dto.Sequence.Select(pair => ((byte)pair[0], (byte)pair[1])).ToArray();
+
+            string baseName = fullName.Split('.')[0];
+
+            InputType inputType;
+            if (!Enum.TryParse<InputType>(baseName, ignoreCase: true, out inputType))
+            {
+                inputType = InputType.Combined;
+                Console.WriteLine($"⚠️ Profile '{fullName}' has unrecognized base name '{baseName}'. Falling back to InputType.Combined.");
+            }
+
+            var localEnv = new ExecutionEnvironment(parentEnv);
+            localEnv.Globals.UpdateSetting("InputType", inputType);
+
+            var profile = new InputProfile(fullName, sequence, dto.GlobalRounds, dto.AggregateScore);
+
+            try
+            {
+                var crypto = localEnv.Crypto;
+                var input = localEnv.Globals.Input;
+
+                var sw = Stopwatch.StartNew();
+                var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+                sw.Stop();
+                var payload = crypto.GetPayloadOnly(encrypted);
+
+                var (avalanche, _, keydep, _) =
+                    ProcessAvalancheAndKeyDependency(crypto, input, GlobalsInstance.Password, profile);
+
+                var analysis = localEnv.CryptoAnalysis.RunCryptAnalysis(payload, avalanche, keydep, input);
+                var aggregateScore = localEnv.CryptoAnalysis.CalculateAggregateScore(analysis, localEnv.Globals.ScoringMode);
+
+                profile = profile with { AggregateScore = aggregateScore };
+
+                updatedProfiles[fullName] = new InputProfileDto
+                {
+                    Sequence = profile.Sequence
+                        .Select(pair => new List<byte> { pair.ID, pair.TR })
+                        .ToList(),
+                    GlobalRounds = profile.GlobalRounds,
+                    AggregateScore = profile.AggregateScore
+                };
+
+                Console.WriteLine($"✅ Refreshed profile: {fullName} (Score: {aggregateScore:F10}) ({sw.Elapsed.TotalMilliseconds} ms)");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Failed to refresh '{fullName}': {ex.Message}");
+            }
+        }
+
+        try
+        {
+            var updatedJson = JsonSerializer.Serialize(updatedProfiles, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(path, updatedJson);
+        }
+        catch (Exception ex)
+        {
+            return ($"❌ Failed to write updated profiles: {ex.Message}", ConsoleColor.Red);
+        }
+
+        if (IsInteractiveWorkbench(parentEnv))
+            PressAnyKey();
+
+        RefreshProfiles();
+        return ("✅ All profiles touched and updated.", ConsoleColor.Green);
+    }
+
+    #endregion Profile Management
+    public static (string, ConsoleColor) AssessSequence(ExecutionEnvironment localEnv, List<string> sequence, string[] args, List<string>? results)
+    {
+        var inputTypes = Enum.GetValues(typeof(InputType)).Cast<InputType>();
+        var password = GlobalsInstance.Password;
+        using var _ = new BatchModeScope(localEnv); // Sets BatchMode = true
+
+        // Allow override from args
+        var passwordIndex = Array.IndexOf(args, "--password");
+        if (passwordIndex >= 0 && passwordIndex < args.Length - 1)
+        {
+            password = string.Join(" ", args.Skip(passwordIndex + 1));
+        }
+
+        // Build profile from sequence
+        var seq = new SequenceHelper(localEnv.Crypto);
+        SequenceHelper.ParsedSequence parsed;
+        try
+        {
+            parsed = seq.ParseSequenceFull(sequence);
+        }
+        catch (Exception ex)
+        {
+            return ($"❌ Failed to parse current sequence: {ex.Message}", ConsoleColor.Red);
+        }
+        var profile = InputProfiler.CreateInputProfile("sequence",
+            sequence: parsed.Transforms.Select(t => t.ID).ToArray(),
+            tRs: parsed.Transforms.Select(t => (byte)t.TR).ToArray(),
+            globalRounds: parsed.SequenceAttributes.TryGetValue("GR", out var grStr) && int.TryParse(grStr, out var parsedGR)
+                ? parsedGR : localEnv.Globals.Rounds);
+
+        foreach (var inputType in inputTypes)
+        {
+            var env = new ExecutionEnvironment(localEnv, password);
+            env.Globals.UpdateSetting("InputType", inputType);
+
+            try
+            {
+                var crypto = env.Crypto;
+                var input = env.Globals.Input;
+
+                // Time encryption only
+                var sw = Stopwatch.StartNew();
+                var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+                sw.Stop();
+                var payload = crypto.GetPayloadOnly(encrypted);
+
+                // Analyze metrics
+                var (avalanche, _, keydep, _) =
+                    ProcessAvalancheAndKeyDependency(crypto, input, password, profile);
+
+                var analysisResults = env.CryptoAnalysis.RunCryptAnalysis(payload, avalanche, keydep, input);
+                var score = env.CryptoAnalysis.CalculateAggregateScore(analysisResults, env.Globals.ScoringMode);
+                var fswp = FormatScoreWithPassRatio(score, analysisResults, sw.Elapsed.TotalMilliseconds);
+
+                string output = $"{inputType,-12}: {fswp}";
+                Console.WriteLine(output);
+                if (results != null)
+                    results.Add(output);
+            }
+            catch (Exception ex)
+            {
+                return ($"❌ {inputType}: Error - {ex.Message}", ConsoleColor.Red);
+            }
+        }
+
+        if (IsInteractiveWorkbench(localEnv))
+            PressAnyKey();
+
+        return ("Assess Sequence completed successfully.", ConsoleColor.Green);
+    }
+
+    public static (string, ConsoleColor) SelectBestFast(ExecutionEnvironment localEnv, string[] args)
+    {
+        var fileIndex = Array.IndexOf(args, "--file");
+        if (fileIndex == -1 || fileIndex >= args.Length - 1)
+            return ("❌ Missing or malformed --file <filename> argument.", ConsoleColor.Red);
+
+        var filename = args[fileIndex + 1];
+        if (!File.Exists(filename))
+            return ($"❌ File not found: {filename}", ConsoleColor.Red);
+
+        // Optional minimum pass count
+        int? minPassCount = null;
+        var passArg = args.FirstOrDefault(a => a.StartsWith("--min-passCount"));
+        if (passArg != null && int.TryParse(passArg.Split(' ').Last(), out int min))
+            minPassCount = min;
+
+        // Read and clean candidate sequences
+        var candidateLines = File.ReadAllLines(filename)
+            .Where(line => line.Contains("New Best:"))
+            .Select(line =>
+            {
+                var start = line.IndexOf("New Best:") + "New Best:".Length;
+                var grIndex = line.IndexOf("| (GR:");
+                if (start < 0 || grIndex < 0 || grIndex <= start) return null;
+
+                // Extract core sequence and GR attribute
+                var core = line[start..grIndex].Trim();
+                var grPartEnd = line.IndexOf(')', grIndex);
+                if (grPartEnd < 0) return null;
+                var grPart = line[grIndex..(grPartEnd + 1)].Trim();
+
+                var fullSequence = $"{core} {grPart}";
+
+                SequenceHelper seqHelper = new(localEnv.Crypto);
+                var format = SequenceFormat.ID | seqHelper.DetermineFormat(fullSequence);
+                var parsedSequence = seqHelper.ParseSequenceFull(fullSequence, format);
+
+                if (parsedSequence == null || !parsedSequence.Transforms.Any())
+                    return null;
+
+                return seqHelper.FormattedSequence<List<string>>(
+                    parsedSequence,
+                    SequenceFormat.ID | SequenceFormat.TRounds | SequenceFormat.RightSideAttributes,
+                    2, true);
+            })
+            .Where(seq => seq != null && seq.Any())
+            .Distinct(new SequenceListComparer())
+            .ToList();
+
+        if (candidateLines.Count == 0)
+            return ("❌ No valid sequences found in the candidate file.", ConsoleColor.Red);
+
+        var scoredCandidates = new List<(List<string> Sequence, double AvgScore, int PassCount, double TimeMs, List<string> Report)>();
+
+        foreach (var candidate in candidateLines)
+        {
+            var results = new List<string>();
+            var (msg, color) = AssessSequence(localEnv, candidate!, args, results);
+            if (color != ConsoleColor.Green)
+            {
+                ColorConsole.WriteLine($"<{color.ToString()}>{msg}</{color.ToString()}>");
+                continue;
+            }
+
+            try
+            {
+                List<(double Score, int Passes, double Time)> scores = results
+                    .Select(line =>
+                    {
+                        var match = Regex.Match(line, @"\((?<score>\d+\.\d+)\)\s+\((?<pass>\d) / 9\)\s+\((?<time>\d+\.\d+)ms\)");
+                        return match.Success
+                            ? (Score: double.Parse(match.Groups["score"].Value),
+                                Passes: int.Parse(match.Groups["pass"].Value),
+                                Time: double.Parse(match.Groups["time"].Value))
+                            : ((double Score, int Passes, double Time)?)null;
+                    })
+                    .Where(r => r.HasValue)
+                    .Select(r => r!.Value)
+                    .ToList();
+
+
+                if (scores.Count == 0) continue;
+
+                double avg = scores.Average(s => s.Item1);
+                int passCount = scores.Sum(s => s.Item2);
+                double totalTime = scores.Sum(s => s.Item3);
+
+                scoredCandidates.Add((candidate, avg, passCount, totalTime, results)!);
+            }
+            catch { /* skip malformed */ }
+        }
+
+        if (scoredCandidates.Count == 0)
+            return ("❌ No valid scoring candidates after assessment.", ConsoleColor.Red);
+
+        var best = scoredCandidates.OrderByDescending(c => c.AvgScore).First();
+
+        var fast = scoredCandidates
+            .Where(c => c != best)
+            .Where(c => !minPassCount.HasValue || c.PassCount >= minPassCount.Value)
+            .OrderByDescending(c => c.PassCount)
+            .ThenByDescending(c => c.AvgScore)
+            .ThenBy(c => c.TimeMs)
+            .FirstOrDefault();
+
+        Console.WriteLine("\n===== 🏆 Selected .Best Sequence =====\n");
+        best.Sequence.ForEach(Console.WriteLine);
+        best.Report.ForEach(Console.WriteLine);
+
+        if (fast != default)
+        {
+            Console.WriteLine("\n===== ⚡ Selected .Fast Sequence =====\n");
+            fast.Sequence.ForEach(Console.WriteLine);
+            fast.Report.ForEach(Console.WriteLine);
+        }
+        else
+        {
+            Console.WriteLine("\n⚠️ No suitable .Fast sequence found meeting pass count threshold.");
+        }
+
+        PressAnyKey();
+
+        return ("✅ SelectBestFast completed.", ConsoleColor.Green);
+    }
+
+    // Helper comparer to prevent duplicate sequence lists
+    //class SequenceListComparer : IEqualityComparer<List<string>>
+    //{
+    //    public bool Equals(List<string>? x, List<string>? y)
+    //    {
+    //        if (x == null || y == null) return false;
+    //        return x.SequenceEqual(y);
+    //    }
+
+    //    public int GetHashCode(List<string> obj)
+    //    {
+    //        return string.Join("|", obj).GetHashCode();
+    //    }
+    //}
+    class SequenceListComparer : IEqualityComparer<List<string>?>
+    {
+        public bool Equals(List<string>? x, List<string>? y)
+        {
+            if (ReferenceEquals(x, y)) return true;
+            if (x is null || y is null) return false;
+            if (x.Count != y.Count) return false;
+            return x.SequenceEqual(y);
+        }
+
+        public int GetHashCode(List<string>? obj)
+        {
+            if (obj is null) return 0;
+            return obj.Aggregate(17, (hash, str) => hash * 31 + (str?.GetHashCode() ?? 0));
+        }
+    }
+
 
     public static (string, ConsoleColor) RunRegressionTests(ExecutionEnvironment localEnv)
     {
@@ -151,11 +938,22 @@ public partial class Handlers
 
                     for (var i = 0; i < rounds; i++)
                     {
-                        var sw = Stopwatch.StartNew();
-                        var encrypted = localEnv.Crypto.Encrypt(new[] { forwardId }, input);
-                        var decrypted = localEnv.Crypto.Decrypt(new[] { inverseId }, encrypted);
-                        sw.Stop();
+                        // 🧱 Build input profile for forward transform
+                        var profile = InputProfiler.CreateInputProfile(name: $"Benchmark-{forwardId}",
+                            sequence: new[] { forwardId },
+                            tRs: new[] { (byte)1 },
+                            globalRounds: 1 // or use `localEnv.Globals.Rounds` if dynamic
+                        );
 
+                        var sw = Stopwatch.StartNew();
+
+                        // 🔐 Encrypt using profile
+                        var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+
+                        // 🔓 New-style decryption (self-contained header)
+                        var decrypted = localEnv.Crypto.Decrypt(encrypted);
+
+                        sw.Stop();
                         timings[i] = sw.Elapsed.TotalMilliseconds;
                     }
 
@@ -195,11 +993,7 @@ public partial class Handlers
 
         // ✅ Refresh the benchmark cache to ensure the latest benchmark data is loaded from disk.
         // // This clears any stale in-memory data and reloads updated timing information.
-        CryptoLib.FlushAndReloadBenchmarkCache();
-
-        // ✅ Apply the freshly loaded benchmark timings to all transforms in the active registry.
-        // // This populates each transform’s BenchmarkTimeMs property for in-memory use.
-        localEnv.Crypto.AssignBenchmarkValues();
+        FlushAndReloadBenchmarkCache();
 
         // ✅ Set the global baseline benchmark time used for normalization and comparison.
         // // Typically sourced from a designated representative transform (e.g., ID 35).
@@ -224,56 +1018,36 @@ public partial class Handlers
         {
             switch (key)
             {
-#if true
+
                 case "inputtype":
-                {
-                    var totalLength = localEnv.Globals.Input.Length;
-                    int fullChunks = totalLength / 4096;
-                    int remainder = totalLength % 4096;
-
-                    Console.WriteLine($"Input Type: {localEnv.Globals.InputType}");
-                    Console.WriteLine($"Input Size: {totalLength:N0} bytes ({fullChunks} full chunks of 4096)");
-
-                    for (int i = 0; i < fullChunks; i++)
                     {
-                        var chunk = localEnv.Globals.Input.Skip(i * 4096).Take(4096).ToArray();
-                        var first16Bytes = string.Join(" ", chunk.Take(16).Select(b => b.ToString("X2")));
-                        Console.WriteLine($"Chunk {i + 1}: {first16Bytes}");
+                        var totalLength = localEnv.Globals.Input.Length;
+                        int fullChunks = totalLength / 4096;
+                        int remainder = totalLength % 4096;
+
+                        Console.WriteLine($"Input Type: {localEnv.Globals.InputType}");
+                        Console.WriteLine($"Input Size: {totalLength:N0} bytes ({fullChunks} full chunks of 4096)");
+
+                        for (int i = 0; i < fullChunks; i++)
+                        {
+                            var chunk = localEnv.Globals.Input.Skip(i * 4096).Take(4096).ToArray();
+                            var first16Bytes = string.Join(" ", chunk.Take(16).Select(b => b.ToString("X2")));
+                            Console.WriteLine($"Chunk {i + 1}: {first16Bytes}");
+                        }
+
+                        if (remainder > 0)
+                        {
+                            var lastChunk = localEnv.Globals.Input.Skip(fullChunks * 4096).ToArray();
+                            var first16Bytes = string.Join(" ", lastChunk.Take(16).Select(b => b.ToString("X2")));
+                            Console.WriteLine($"(Partial) Chunk {fullChunks + 1}: {first16Bytes} ({lastChunk.Length} bytes)");
+                        }
+
+                        Console.WriteLine("\nPress any key to return to the main menu...");
+                        Console.ReadKey();
+                        break;
                     }
 
-                    if (remainder > 0)
-                    {
-                        var lastChunk = localEnv.Globals.Input.Skip(fullChunks * 4096).ToArray();
-                        var first16Bytes = string.Join(" ", lastChunk.Take(16).Select(b => b.ToString("X2")));
-                        Console.WriteLine($"(Partial) Chunk {fullChunks + 1}: {first16Bytes} ({lastChunk.Length} bytes)");
-                    }
 
-                    Console.WriteLine("\nPress any key to return to the main menu...");
-                    Console.ReadKey();
-                    break;
-                }
-
-#else
-                case "inputtype":
-                    if (localEnv.Globals.Input.Length % 4096 != 0)
-                        return ("Input length must be a multiple of 4096 bytes.", ConsoleColor.Red);
-
-                    var chunkCount = localEnv.Globals.Input.Length / 4096;
-                    Console.WriteLine($"Input Type: {localEnv.Globals.InputType}");
-                    Console.WriteLine(
-                        $"Input Size: {localEnv.Globals.Input.Length} bytes ({chunkCount} chunks of 4096 bytes)");
-
-                    for (var i = 0; i < chunkCount; i++)
-                    {
-                        var chunk = localEnv.Globals.Input.Skip(i * 4096).Take(4096).ToArray();
-                        var first16Bytes = string.Join(" ", chunk.Take(16).Select(b => b.ToString("X2")));
-                        Console.WriteLine($"Chunk {i + 1}: {first16Bytes}");
-                    }
-
-                    Console.WriteLine("\nPress any key to return to the main menu...");
-                    Console.ReadKey();
-                    break;
-#endif
                 case "weights":
                     {
                         if (localEnv.Globals.Mode == OperationModes.None)
@@ -285,10 +1059,10 @@ public partial class Handlers
                                 kvp => kvp.Value.Weight);
 
                         // Retrieve known weight tables dynamically
-                        var foundCryptographic = MetricInfoHelper.TryGetWeights(OperationModes.Cryptographic,
+                        var foundCryptographic = localEnv.CryptoAnalysis.TryGetWeights(OperationModes.Cryptographic,
                             out var cryptographicWeights);
                         var foundExploratory =
-                            MetricInfoHelper.TryGetWeights(OperationModes.Exploratory, out var exploratoryWeights);
+                            localEnv.CryptoAnalysis.TryGetWeights(OperationModes.Exploratory, out var exploratoryWeights);
 
                         if (!foundCryptographic || !foundExploratory)
                             return ("Error: Could not retrieve predefined mode weights.", ConsoleColor.Red);
@@ -338,72 +1112,6 @@ public partial class Handlers
         catch (Exception ex)
         {
             return ($"Error processing query {key}: {ex.Message}", ConsoleColor.Red);
-        }
-    }
-
-    [AttributeUsage(AttributeTargets.Property)]
-    public class GlobalSettingAttribute : Attribute
-    {
-        /// <summary>
-        /// If true, this setting is only shown when debugging.
-        /// </summary>
-        public bool IsDebugOnly { get; set; } = false;
-
-        /// <summary>
-        /// If true, this setting is internal and will not appear in user-facing lists.
-        /// </summary>
-        public bool IsInternal { get; set; } = false; // ✅ Hides setting from UI but allows CLI access
-
-        /// <summary>
-        /// If true, this setting should not be persisted when saving configurations.
-        /// </summary>
-        public bool IsNoSave { get; set; } = false; // ✅ NEW: Excludes setting from being written to disk
-
-        /// <summary>
-        /// If this is a compound setting, this array defines its related properties.
-        /// </summary>
-        public string[]? RelatedProperties { get; }
-
-        /// <summary>
-        /// Standard constructor (for regular settings).
-        /// </summary>
-        public GlobalSettingAttribute()
-        {
-        }
-
-        /// <summary>
-        /// Constructor for compound settings.
-        /// </summary>
-        public GlobalSettingAttribute(params string[]? relatedProperties)
-        {
-            RelatedProperties = relatedProperties;
-        }
-
-        /// <summary>
-        /// Constructor for debug-only settings.
-        /// </summary>
-        public GlobalSettingAttribute(bool IsDebugOnly)
-        {
-            this.IsDebugOnly = IsDebugOnly;
-        }
-
-        /// <summary>
-        /// Constructor for internal settings.
-        /// </summary>
-        public GlobalSettingAttribute(bool IsDebugOnly, bool IsInternal)
-        {
-            this.IsDebugOnly = IsDebugOnly;
-            this.IsInternal = IsInternal;
-        }
-
-        /// <summary>
-        /// Constructor for no-save settings.
-        /// </summary>
-        public GlobalSettingAttribute(bool IsDebugOnly, bool IsInternal, bool IsNoSave)
-        {
-            this.IsDebugOnly = IsDebugOnly;
-            this.IsInternal = IsInternal;
-            this.IsNoSave = IsNoSave;
         }
     }
 
@@ -562,18 +1270,28 @@ public partial class Handlers
                 value.Equals("userdata", StringComparison.OrdinalIgnoreCase) &&
                 !File.Exists("UserData.bin"))
             {
-                return ("⚠️ Cannot switch to UserData input: UserData.bin not found. Use 'load user data <file>' to load your data first.", ConsoleColor.Yellow);
+                return (
+                    "⚠️ Cannot switch to UserData input: UserData.bin not found. Use 'load user data <file>' to load your data first.",
+                    ConsoleColor.Yellow);
             }
+
             localEnv.Globals.UpdateSetting(key, convertedValue);
 
             // ✅ immediat save
             localEnv.Globals.Save();
 
-            return ($"<Green>{key}</Green> updated to: <Green>{value}</Green>", Console.ForegroundColor);
+            // after a set command, show the list
+            MangoConsole.CommandStack.Push("list");
+            //return ($"<Green>{key}</Green> updated to: <Green>{value}</Green>", Console.ForegroundColor);
+            return (null, Console.ForegroundColor)!;
         }
         catch (Exception ex)
         {
             return ($"<Red>Error updating {key}:</Red> {ex.Message}", Console.ForegroundColor);
+        }
+        finally
+        {
+            
         }
     }
 
@@ -685,17 +1403,24 @@ public partial class Handlers
 
         foreach (var transformId in userSequence)
         {
-            // Apply the transform and get the encrypted result
-            var transformInputCopy = previousEncrypted!.ToArray(); // Ensure transform input is untouched
-            var encrypted = localEnv.Crypto.Encrypt(new byte[] { transformId }, transformInputCopy);
+            // Build single-transform InputProfile (TR = 1)
+            var profile = InputProfiler.CreateInputProfile(name: $"Step-{transformId}",
+                sequence: new[] { transformId },
+                tRs: new byte[] { 1 },
+                globalRounds: localEnv.Globals.Rounds
+            );
+
+            // Encrypt using high-level API
+            var transformInputCopy = previousEncrypted!.ToArray(); // Ensure original input is untouched
+            var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, transformInputCopy);
 
             // Extract payload (removes Mango header)
             var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
 
-            // Add the result to the list
+            // Store the result
             results.Add(payload);
 
-            // Update previousEncrypted for the next iteration
+            // Update input for the next transform
             previousEncrypted = payload;
         }
 
@@ -794,8 +1519,6 @@ public partial class Handlers
             return ($"❌ Failed to load \"{filename}\": {ex.Message}", ConsoleColor.Red);
         }
     }
-
-
     #region ComparativeAnalysis
 
     public static (string, ConsoleColor) RunComparativeAnalysisHandler(ExecutionEnvironment localEnv, List<string> sequence)
@@ -839,11 +1562,17 @@ public partial class Handlers
             if (type == InputType.UserData)
                 continue; // ❌ Skip throughput test for UserData
 
+            ColorConsole.WriteLine($"Processing InputType: <green>{type.ToString()}</green>");
+
             List<byte[]> inputBlocks = new();
             for (var i = 0; i < blockCount; i++)
                 inputBlocks.Add(GenerateTestInput(blockSize, type));
 
-            var profile = InputProfiler.GetInputProfile(inputBlocks[0]);
+            var profile = InputProfiler.GetInputProfile(
+                inputBlocks[0], 
+                localEnv.Globals.Mode, 
+                localEnv.Globals.ScoringMode, 
+                performance: EncryptionPerformanceMode.Fast);
 
             List<byte[]> mangoEncryptedBlocks = new();
             var encryptedFirst = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, inputBlocks[0]);
@@ -892,7 +1621,7 @@ public partial class Handlers
             }
 
             var password = "mango_benchmark";
-            var salt = GenerateRandomBytes(16);
+            var salt = AesSalt;
             using var deriveBytes = new Rfc2898DeriveBytes(
                 password,
                 salt,
@@ -903,23 +1632,15 @@ public partial class Handlers
             var aesKey = deriveBytes.GetBytes(32);
             var aesIV = deriveBytes.GetBytes(16);
 
-            using var aes = Aes.Create();
-            aes.Key = aesKey;
-            aes.IV = aesIV;
-            aes.Mode = CipherMode.CBC;
-            aes.Padding = PaddingMode.PKCS7;
-            using var encryptor = aes.CreateEncryptor();
-            using var decryptor = aes.CreateDecryptor();
-
+            var aes = new AesSoftwareCore.AesSoftwareCore(aesKey);
             List<byte[]> aesEncryptedBlocks = new();
 
             var swAesEncrypt = Stopwatch.StartNew();
             for (var i = 0; i < inputBlocks.Count; i++)
             {
-                var encrypted = encryptor.TransformFinalBlock(inputBlocks[i]!, 0, inputBlocks[i]!.Length);
+                var encrypted = aes.EncryptCbc(inputBlocks[i]!, aesIV);
                 aesEncryptedBlocks.Add(encrypted);
             }
-
             swAesEncrypt.Stop();
 
             double aesEncryptBytes = blockCount * blockSize;
@@ -938,8 +1659,7 @@ public partial class Handlers
                 var swAesDecrypt = Stopwatch.StartNew();
                 for (var i = 0; i < aesEncryptedBlocks.Count; i++)
                 {
-                    var decrypted =
-                        decryptor.TransformFinalBlock(aesEncryptedBlocks[i], 0, aesEncryptedBlocks[i].Length);
+                    var decrypted = aes.DecryptCbc(aesEncryptedBlocks[i], aesIV);
                     aesDecryptedBlocks.Add(decrypted);
                 }
 
@@ -960,12 +1680,13 @@ public partial class Handlers
                     ? $"🐢 Mango is {1 / speedRatio:F1}× slower than AES"
                     : "⚖️ Speeds are roughly equivalent";
 
-            if (speedRatio >= 1.5)
-                color = ConsoleColor.Green;
-            else if (speedRatio <= 0.75)
-                color = ConsoleColor.Red;
-            else
-                color = ConsoleColor.Yellow;
+            //if (speedRatio >= 1.5)
+            //    color = ConsoleColor.Green;
+            //else if (speedRatio <= 0.75)
+            //    color = ConsoleColor.Red;
+            //else
+            //    color = ConsoleColor.Yellow;
+            color = ConsoleColor.Gray;
 
             resultBuilder.AppendLine($"Input Type: {type}");
             resultBuilder.AppendLine(
@@ -993,21 +1714,278 @@ public partial class Handlers
             $"Mango Encrypt Avg: {mangoAvgEncMBps:F2} MB/s ({mangoAvgEncBps / 1_000_000_000:F2} Gbps)");
         resultBuilder.AppendLine(
             $"AES Encrypt Avg:   {aesAvgEncMBps:F2} MB/s ({aesAvgEncBps / 1_000_000_000:F2} Gbps)");
-        resultBuilder.AppendLine($"⚡ Mango is {finalRatio:F1}× faster on average");
+
+        if (finalRatio >= 1.0)
+        {
+            resultBuilder.AppendLine($"⚡ Mango is {finalRatio:F1}× faster on average");
+        }
+        else
+        {
+            double slowerFactor = aesAvgEncMBps / mangoAvgEncMBps;
+            resultBuilder.AppendLine($"🐢 Mango is {slowerFactor:F1}× slower than AES");
+        }
 
         return (resultBuilder.ToString(), color);
     }
+    public static (string, ConsoleColor) RunCryptoShowdown(ExecutionEnvironment parentEnv)
+    {
+        var inputTypes = Enum.GetValues<InputType>();
+        var reportSections = new List<List<string>>();
+        var localEnv = new ExecutionEnvironment(parentEnv);
 
+        foreach (var inputType in inputTypes)
+        {
+            localEnv.Globals.UpdateSetting("InputType", inputType);
+
+            var bestProfile = InputProfiler.GetInputProfile(localEnv.Globals.Input, localEnv.Globals.Mode, localEnv.Globals.ScoringMode);
+            if (bestProfile == null)
+            {
+                Console.WriteLine($"❌ No profile found for input type: {inputType}");
+                continue;
+            }
+
+            var profile = new InputProfile(bestProfile.Name, bestProfile.Sequence, bestProfile.GlobalRounds, bestProfile.AggregateScore);
+
+            localEnv.CryptoAnalysis.Initialize();
+
+            // 🔒 Mango encryption
+            var swMango = Stopwatch.StartNew();
+            var encryptedMango = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            swMango.Stop();
+            var mangoPayload = localEnv.Crypto.GetPayloadOnly(encryptedMango);
+
+            // 🔐 AES encryption
+            var swAes = Stopwatch.StartNew();
+            var aesEncrypted = AesEncrypt(localEnv.Globals.Input, GlobalsInstance.Password, out var saltLen, out var padLen);
+            swAes.Stop();
+            var aesPayload = ExtractAESPayload(aesEncrypted, saltLen, padLen);
+            var aesDecrypted = AesDecrypt(aesEncrypted, GlobalsInstance.Password);
+            var aesReversible = aesDecrypted.SequenceEqual(localEnv.Globals.Input);
+
+            var (mangoAv, aesAv, mangoKd, aesKd) = ProcessAvalancheAndKeyDependency(
+                localEnv.Crypto,
+                localEnv.Globals.Input,
+                GlobalsInstance.Password,
+                profile,
+                processAes: true);
+
+            // 🧠 Mango analysis
+            var mangoAnalysis = localEnv.CryptoAnalysis.RunCryptAnalysis(mangoPayload, mangoAv, mangoKd, localEnv.Globals.Input);
+            var mangoScore = localEnv.CryptoAnalysis.CalculateAggregateScore(mangoAnalysis, localEnv.Globals.ScoringMode);
+            var mangoPasses = mangoAnalysis.Count(m => m.Passed);
+
+            // 🔍 AES analysis
+            var aesAnalysis = localEnv.CryptoAnalysis.RunCryptAnalysis(aesPayload, aesAv, aesKd, localEnv.Globals.Input);
+            var aesScore = localEnv.CryptoAnalysis.CalculateAggregateScore(aesAnalysis, localEnv.Globals.ScoringMode);
+            var aesPasses = aesAnalysis.Count(m => m.Passed);
+
+            var section = new List<string>
+        {
+            $"=== InputType: {inputType} ===",
+            $"Mango: {profile.Name} (Score: {mangoScore:F4}, Passes: {mangoPasses}/9, Time: {swMango.Elapsed.TotalMilliseconds:F2} ms)",
+            $"AES  : Built-in (Score: {aesScore:F4}, Passes: {aesPasses}/9, Time: {swAes.Elapsed.TotalMilliseconds:F2} ms)",
+            string.Empty
+        };
+
+            reportSections.Add(section);
+        }
+
+        foreach (var section in reportSections)
+            foreach (var line in section)
+                Console.WriteLine(line);
+
+        if (IsInteractiveWorkbench(parentEnv))
+            PressAnyKey();
+
+        return ("✅ Crypto Showdown complete.", ConsoleColor.Green);
+    }
+#if true
+    public static (string, ConsoleColor) RunMetricBreakdown(ExecutionEnvironment parentEnv)
+    {
+        var inputTypes = Enum.GetValues<InputType>();
+        var localEnv = new ExecutionEnvironment(parentEnv);
+
+        var metricNames = new[]
+        {
+        "Entropy",
+        "BitVariance",
+        "SlidingWindow",
+        "FrequencyDistribution",
+        "PeriodicityCheck",
+        "MangosCorrelation",
+        "PositionalMapping",
+        "AvalancheScore",
+        "KeyDependency"
+    };
+
+        // Helper to format metric cell
+        string FormatMetric(string status, double score) => $"{status} {score:F7}";
+        string FormatStatus(CryptoAnalysisCore.AnalysisResult r) =>
+            r == null ? FormatMetric("❓", 0) : FormatMetric(r.Passed ? "✅" : "❌", r.Score);
+        //r == null ? FormatMetric("❓", 0) : FormatMetric(r.Passed ? "✅" : "❌", r.Score);
+
+        // Build Mango CSV
+        var mangoCsv = new List<string> { "🔶 Mango Metric Breakdown", "" };
+        mangoCsv.Add("InputType," + string.Join(",", metricNames));
+
+        // Build AES CSV
+        var aesCsv = new List<string> { "🔷 AES Metric Breakdown", "" };
+        aesCsv.Add("InputType," + string.Join(",", metricNames));
+
+        foreach (var inputType in inputTypes)
+        {
+            localEnv.Globals.UpdateSetting("InputType", inputType);
+
+            var bestProfile = InputProfiler.GetInputProfile(localEnv.Globals.Input, localEnv.Globals.Mode, localEnv.Globals.ScoringMode);
+            if (bestProfile == null)
+            {
+                Console.WriteLine($"❌ No profile found for input type: {inputType}");
+                continue;
+            }
+
+            var profile = new InputProfile(bestProfile.Name, bestProfile.Sequence, bestProfile.GlobalRounds, bestProfile.AggregateScore);
+            localEnv.CryptoAnalysis.Initialize();
+
+            var mangoEncrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            var mangoPayload = localEnv.Crypto.GetPayloadOnly(mangoEncrypted);
+
+            var aesEncrypted = AesEncrypt(localEnv.Globals.Input, GlobalsInstance.Password, out var saltLen, out var padLen);
+            var aesPayload = ExtractAESPayload(aesEncrypted, saltLen, padLen);
+
+            var (mangoAv, aesAv, mangoKd, aesKd) = ProcessAvalancheAndKeyDependency(
+                localEnv.Crypto,
+                localEnv.Globals.Input,
+                GlobalsInstance.Password,
+                profile,
+                processAes: true);
+
+            var mangoResults = localEnv.CryptoAnalysis.RunCryptAnalysis(mangoPayload, mangoAv, mangoKd, localEnv.Globals.Input);
+            var aesResults = localEnv.CryptoAnalysis.RunCryptAnalysis(aesPayload, aesAv, aesKd, localEnv.Globals.Input);
+
+            string mangoRow = inputType + "," +
+                              string.Join(",", metricNames.Select(name =>
+                                  FormatStatus(mangoResults.FirstOrDefault(r => r.Name == name)!)));
+
+            string aesRow = inputType + "," +
+                            string.Join(",", metricNames.Select(name =>
+                                FormatStatus(aesResults.FirstOrDefault(r => r.Name == name)!)));
+
+            mangoCsv.Add(mangoRow);
+            aesCsv.Add(aesRow);
+        }
+
+        // Display both CSVs to console
+        CsvFormatter.DisplayCsvFormatted(mangoCsv);
+        CsvFormatter.DisplayCsvFormatted(aesCsv);
+
+        if (IsInteractiveWorkbench(parentEnv))
+            PressAnyKey();
+
+        return ("✅ Metric breakdown complete.", ConsoleColor.Green);
+    }
+
+#else
+    public static (string, ConsoleColor) RunMetricBreakdown(ExecutionEnvironment parentEnv)
+    {
+        var inputTypes = Enum.GetValues<InputType>();
+        var localEnv = new ExecutionEnvironment(parentEnv);
+
+        var metricNames = new[]
+        {
+        "Entropy",
+        "BitVariance",
+        "SlidingWindow",
+        "FrequencyDistribution",
+        "PeriodicityCheck",
+        "MangosCorrelation",
+        "PositionalMapping",
+        "AvalancheScore",
+        "KeyDependency"
+    };
+
+        int colWidth = 17;//metricNames.Max(name => name.Length) + 3; // 3 = buffer
+        string FormatCell(string content) => content.PadRight(colWidth);
+        string FormatMetric(string status, double score) =>
+            $"{status} {score,6:F2}";
+
+        var mangoTable = new List<string> { "\n🔶 Mango Metric Breakdown" };
+        var aesTable = new List<string> { "\n🔷 AES Metric Breakdown" };
+        string header = FormatCell("InputType") + string.Join(" ", metricNames.Select(name => FormatCell(name)));
+
+        string divider = new string('-', header.Length);
+
+        mangoTable.Add(header);
+        mangoTable.Add(divider);
+        aesTable.Add(header);
+        aesTable.Add(divider);
+
+        foreach (var inputType in inputTypes)
+        {
+            localEnv.Globals.UpdateSetting("InputType", inputType);
+
+            var bestProfile = InputProfiler.GetInputProfile(localEnv.Globals.Input, localEnv.Globals.Mode, localEnv.Globals.ScoringMode);
+            if (bestProfile == null)
+            {
+                Console.WriteLine($"❌ No profile found for input type: {inputType}");
+                continue;
+            }
+
+            var profile = new InputProfile(bestProfile.Name, bestProfile.Sequence, bestProfile.GlobalRounds, bestProfile.AggregateScore);
+            localEnv.CryptoAnalysis.Initialize();
+
+            var mangoEncrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            var mangoPayload = localEnv.Crypto.GetPayloadOnly(mangoEncrypted);
+
+            var aesEncrypted = AesEncrypt(localEnv.Globals.Input, GlobalsInstance.Password, out var saltLen, out var padLen);
+            var aesPayload = ExtractAESPayload(aesEncrypted, saltLen, padLen);
+
+            var (mangoAv, aesAv, mangoKd, aesKd) = ProcessAvalancheAndKeyDependency(
+                localEnv.Crypto,
+                localEnv.Globals.Input,
+                GlobalsInstance.Password,
+                profile,
+                processAes: true);
+
+            var mangoResults = localEnv.CryptoAnalysis.RunCryptAnalysis(mangoPayload, mangoAv, mangoKd, localEnv.Globals.Input);
+            var aesResults = localEnv.CryptoAnalysis.RunCryptAnalysis(aesPayload, aesAv, aesKd, localEnv.Globals.Input);
+
+            string FormatStatus(CryptoAnalysisCore.AnalysisResult r) => r == null
+                ? FormatMetric("❓", 0)
+                : FormatMetric(r.Passed ? "✅" : "❌", r.Score);
+
+            string mangoRow = FormatCell(inputType.ToString()) +
+                              string.Join("", metricNames.Select(name =>
+                                  FormatCell(FormatStatus(mangoResults.FirstOrDefault(r => r.Name == name)))));
+            string aesRow = FormatCell(inputType.ToString()) +
+                            string.Join("", metricNames.Select(name =>
+                                FormatCell(FormatStatus(aesResults.FirstOrDefault(r => r.Name == name)))));
+
+            mangoTable.Add(mangoRow);
+            aesTable.Add(aesRow);
+        }
+
+        foreach (var line in mangoTable.Concat(aesTable))
+            Console.WriteLine(line);
+
+        if (IsInteractiveWorkbench(parentEnv))
+            PressAnyKey();
+
+        return ("✅ Metric breakdown complete.", ConsoleColor.Green);
+    }
+#endif
     public static (string, ConsoleColor) RunComparativeAnalysis(ExecutionEnvironment localEnv,
         SequenceHelper.ParsedSequence parsedSequence)
     {
         SequenceHelper seqHelper = new(localEnv.Crypto);
-        var sequence = seqHelper.GetIDs(parsedSequence);
+        var sequence = parsedSequence.Transforms.Select(t => t.ID).ToArray();
+        var trs = parsedSequence.Transforms.Select(t => (byte)t.TR).ToArray();
+        var globalRounds = parsedSequence.SequenceAttributes.TryGetValue("GR", out var grStr)
+                           && int.TryParse(grStr, out var parsedGR) ? parsedGR : localEnv.Globals.Rounds;
         var formattedSequence = seqHelper.FormattedSequence<string>(parsedSequence,
             SequenceFormat.ID | SequenceFormat.TRounds | SequenceFormat.RightSideAttributes,
             2, true);
 
-        if (sequence.Count == 0) return ("No transforms in sequence. Add transforms before running.", ConsoleColor.Red);
+        if (sequence.Length == 0) return ("No transforms in sequence. Add transforms before running.", ConsoleColor.Red);
 
         try
         {
@@ -1015,31 +1993,48 @@ public partial class Handlers
             localEnv.CryptoAnalysis.Initialize();
 
             Console.WriteLine(
-                $"\n--- Executing Comparative Analysis (GRounds: {localEnv.Crypto.Options.Rounds})---\n");
+                $"\n--- Executing Comparative Analysis (GRounds: {globalRounds})---\n");
+
+            // 🎯 Construct InputProfile using resolved TRs from registry
+            var profile = InputProfiler.CreateInputProfile(name: "comparative",
+                sequence: sequence.ToArray(),
+                tRs: trs,
+                globalRounds: globalRounds
+            );
 
             // Measure Mango Encryption Time
             var stopwatch = Stopwatch.StartNew();
-            var MangoEncrypted = localEnv.Crypto.Encrypt(sequence.ToArray(), localEnv.Globals.Input);
+
+            // 🔑 Include Mango's startup cost in the calculation
+            var options = new CryptoLibOptions(Scoring.MangoSalt);
+            var cryptoLib = new CryptoLib(GlobalsInstance.Password, options);
+
+            var MangoEncrypted = cryptoLib.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
             stopwatch.Stop();
             var MangoTime = stopwatch.Elapsed;
-            var MangoPayload = localEnv.Crypto.GetPayloadOnly(MangoEncrypted); // Extract payload for Mango encryption
+            var MangoPayload = cryptoLib.GetPayloadOnly(MangoEncrypted); // Extract payload for Mango encryption
 
             // Measure AES Encryption Time
             stopwatch = Stopwatch.StartNew();
-            var AESPayload = AesEncrypt(localEnv.Globals.Input, GlobalsInstance.Password,
+            var AESPayloadRaw = AesEncrypt(localEnv.Globals.Input, GlobalsInstance.Password,
                 out var saltLength,
                 out var paddingLength);
             stopwatch.Stop();
             var AESTime = stopwatch.Elapsed;
-            AESPayload = ExtractAESPayload(AESPayload, saltLength, paddingLength);
+            var AESPayload = ExtractAESPayload(AESPayloadRaw, saltLength, paddingLength);
 
-            // Modify a copy of input for Avalanche test and Key Dependency test
+            // make sure AES is able to decrypt it's input
+            var aesDecrypted = AesDecrypt(AESPayloadRaw, GlobalsInstance.Password);
+            var aesReversible = aesDecrypted.SequenceEqual(localEnv.Globals.Input);
+
+            // 🔁 Run Avalanche & KeyDependency tests
             var (MangoAvalanchePayload, AESAvalanchePayload, MangoKeyDependencyPayload, AESKeyDependencyPayload) =
                 ProcessAvalancheAndKeyDependency(
-                    localEnv,
+                    localEnv.Crypto,
+                    localEnv.Globals.Input,
                     GlobalsInstance.Password,
-                    sequence,
-                    true);
+                    profile,
+                    processAes: true);
 
             // Mango Results
             var analysisResults = localEnv.CryptoAnalysis.RunCryptAnalysis(
@@ -1048,19 +2043,15 @@ public partial class Handlers
                 MangoKeyDependencyPayload,
                 localEnv.Globals.Input);
 
-            var aggregateScore =
-                localEnv.CryptoAnalysis.CalculateAggregateScore(analysisResults, localEnv.Globals.UseMetricScoring,
-                    null);
-
             // Display cryptanalysis report
             var mangoHeader = GenerateHeader(
                 localEnv,
                 formattedSequence: formattedSequence,
                 analysisResults: analysisResults,
                 isReversible: true,
-                name: "Mango'",
+                name: "Mango",
                 options: HeaderOptions.AllAnalysis | HeaderOptions.Mode | HeaderOptions.InputType |
-                         HeaderOptions.MetricScoring | HeaderOptions.PassCount
+                         HeaderOptions.ScoringMode | HeaderOptions.PassCount
             );
 
             List<string> mangoAnalysis = localEnv.CryptoAnalysis.CryptAnalysisReport(localEnv.Crypto, analysisResults);
@@ -1073,19 +2064,16 @@ public partial class Handlers
                 AESKeyDependencyPayload,
                 localEnv.Globals.Input);
 
-            aggregateScore =
-                localEnv.CryptoAnalysis.CalculateAggregateScore(analysisResults, localEnv.Globals.UseMetricScoring);
-
             // Display cryptanalysis report: Dummy sequence for AES (it doesn't execute our sequences)
             var aesHeader = GenerateHeader(
                 localEnv,
                 formattedSequence: new SequenceHelper(localEnv.Crypto).FormattedSequence(new byte[] { },
                     SequenceFormat.None),
                 analysisResults: analysisResults,
-                isReversible: true,
-                name: "AES'",
+                isReversible: aesReversible,
+                name: "AES",
                 options: HeaderOptions.AllAnalysis | HeaderOptions.Mode | HeaderOptions.InputType |
-                         HeaderOptions.MetricScoring | HeaderOptions.PassCount
+                         HeaderOptions.ScoringMode | HeaderOptions.PassCount
             );
 
             var aesAnalysis = localEnv.CryptoAnalysis.CryptAnalysisReport(localEnv.Crypto, analysisResults);
@@ -1591,9 +2579,12 @@ public partial class Handlers
             // ✅ Run CryptAnalysis on the encrypted output
             var analysisResults = EncryptAndAnalyze(localEnv, transformBytes);
             Debug.Assert(false, "Unimplemented: need to extract payload here.");
+
+            AssertWeightsMatchExpectedMode(localEnv);
+
             // ✅ Compute the aggregate score
             var aggregateScore =
-                localEnv.CryptoAnalysis.CalculateAggregateScore(analysisResults, localEnv.Globals.UseMetricScoring,
+                localEnv.CryptoAnalysis.CalculateAggregateScore(analysisResults, localEnv.Globals.ScoringMode,
                     null);
 
             // ✅ Extract individual metric values
@@ -1632,30 +2623,40 @@ public partial class Handlers
         return sortedResults;
     }
 
-    public static List<CryptoAnalysis.AnalysisResult>? EncryptAndAnalyze(ExecutionEnvironment localEnv,
+    public static List<CryptoAnalysisCore.AnalysisResult>? EncryptAndAnalyze(
+        ExecutionEnvironment localEnv,
         List<byte> sequence)
     {
-        // Measure Mango Encryption Time
-        var MangoEncrypted = localEnv.Crypto.Encrypt(sequence.ToArray(), localEnv.Globals.Input);
-        var MangoPayload = localEnv.Crypto.GetPayloadOnly(MangoEncrypted); // Extract payload for Mango encryption
+        // 🎯 Construct profile using flat TR:1 for all transforms
+        var flatTRs = Enumerable.Repeat((byte)1, sequence.Count).ToArray();
+        var profile = InputProfiler.CreateInputProfile(name: "EncryptAndAnalyze",
+            sequence: sequence.ToArray(),
+            tRs: flatTRs, // Auto-resolve from registry
+            globalRounds: localEnv.Globals.Rounds
+        );
 
-        // Modify a copy of input for Avalanche test and Key Dependency test
-        var (MangoAvalanchePayload, _, MangoKeyDependencyPayload, _) =
+        // 🔐 Encrypt using high-level profile API
+        var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+        var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
+
+        // 🧪 Generate Avalanche and Key Dependency outputs (no AES needed)
+        var (mangoAvalanche, _, mangoKeyDep, _) =
             ProcessAvalancheAndKeyDependency(
-                localEnv,
-                GlobalsInstance.Password,
-                sequence,
-                false); // ✅ No AES processing needed
+                cryptoLib: localEnv.Crypto,
+                input: localEnv.Globals.Input,
+                password: GlobalsInstance.Password,
+                profile: profile
+            );
 
+        // 📊 Analyze cryptographic results
+        var results = localEnv.CryptoAnalysis.RunCryptAnalysis(
+            payload,
+            mangoAvalanche,
+            mangoKeyDep,
+            localEnv.Globals.Input
+        );
 
-        // Mango Results
-        var analysisResults = localEnv.CryptoAnalysis.RunCryptAnalysis(
-            MangoPayload,
-            MangoAvalanchePayload,
-            MangoKeyDependencyPayload,
-            localEnv.Globals.Input);
-
-        return analysisResults;
+        return results;
     }
 
     private static Dictionary<string, double> BabyMungeWithWeightTuning(HashSet<string> transforms)
@@ -1737,7 +2738,7 @@ public partial class Handlers
 
         // ✅ Auto-detect data type and select the best sequence
         //var (classification, sequenceString) = DataEvaluator.GetInputProfile(inputData);
-        var profile = InputProfiler.GetInputProfile(inputData);
+        var profile = InputProfiler.GetInputProfile(inputData, localEnv.Globals.Mode, localEnv.Globals.ScoringMode);
         var classification = profile.Name;
         SequenceHelper seqHelper = new(localEnv.Crypto);
         var sequenceString = seqHelper.FormattedSequence<string>(profile);
@@ -1757,7 +2758,7 @@ public partial class Handlers
     }
 
     public static void CheckRecordFail(ExecutionEnvironment localEnv,
-        List<CryptoAnalysis.AnalysisResult>? analysisResults, List<byte> currentSequence, string failurekey)
+        List<CryptoAnalysisCore.AnalysisResult>? analysisResults, List<byte> currentSequence, string failurekey)
     {
         // If analysisResults is null, the sequence already failed reversibility.
         if (analysisResults == null)
@@ -1899,56 +2900,62 @@ public partial class Handlers
     }
 
     public static (string, ConsoleColor) RunOptimizeGRCore(ExecutionEnvironment localEnv,
-        SequenceHelper.ParsedSequence parsedSequence, int roundsMax)
+    SequenceHelper.ParsedSequence parsedSequence, int roundsMax)
     {
         SequenceHelper seqHelper = new(localEnv.Crypto);
-        var sequence = seqHelper.GetIDs(parsedSequence);
+        //var sequence = seqHelper.GetIDs(parsedSequence);
+        var sequence = parsedSequence.Transforms.Select(t => t.ID).ToArray();
+        var trs = parsedSequence.Transforms.Select(t => (byte)t.TR).ToArray();
 
-        if (sequence.Count == 0)
+        if (sequence.Length == 0)
             return ("No transforms in sequence. Add transforms before running.", ConsoleColor.Red);
 
-        // Freeze TR settings (the parsed sequence already locked these in)
         localEnv.CryptoAnalysis.Initialize();
-
-        var formatted = seqHelper.FormattedSequence<string>(parsedSequence,
-            SequenceFormat.ID | SequenceFormat.TRounds | SequenceFormat.RightSideAttributes, 2, true);
 
         var roundsStart = 1;
         double bestScore = 0;
         var bestGR = roundsStart;
-        var bestFormatted = formatted;
-        List<CryptoAnalysis.AnalysisResult>? bestMetrics = null;
+        List<CryptoAnalysisCore.AnalysisResult>? bestMetrics = null;
 
         ColorConsole.WriteLine(
             $"\n<white>🔧 Optimizing Global Rounds (Start: {roundsStart}, Max: {roundsMax})</white>\n");
 
         for (var rounds = roundsStart; rounds <= roundsMax; rounds++)
         {
-            localEnv.Globals.UpdateSetting("rounds", rounds);
-            var encrypted = localEnv.Crypto.Encrypt(sequence.ToArray(), localEnv.Globals.Input);
-            var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
-            var reverseSequence = GenerateReverseSequence(localEnv.Crypto, sequence.ToArray());
-            var decrypted = localEnv.Crypto.Decrypt(reverseSequence, encrypted);
+            // 🧠 Build profile with current round count and TRs pulled from registry
+            var profile = InputProfiler.CreateInputProfile(name: "optGR",
+                sequence: sequence.ToArray(),
+                tRs: trs,
+                globalRounds: rounds
+            );
 
-            if (!decrypted!.SequenceEqual(localEnv.Globals.Input))
+            // 🔐 Encrypt and verify reversibility
+            var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
+            var decrypted = localEnv.Crypto.Decrypt(encrypted);
+
+            if (!decrypted.SequenceEqual(localEnv.Globals.Input))
             {
                 ColorConsole.WriteLine($"<red>❌ Reversibility failed at GR: {rounds}</red>");
                 continue;
             }
 
+            // 📊 Run avalanche and key-dependency analysis
             var (avalanche, _, keydep, _) = ProcessAvalancheAndKeyDependency(
-                localEnv,
+                localEnv.Crypto,
+                localEnv.Globals.Input,
                 GlobalsInstance.Password,
-                sequence.ToList());
+                profile);
 
             var results = localEnv.CryptoAnalysis.RunCryptAnalysis(
                 payload,
                 avalanche,
                 keydep,
-                localEnv.Globals.Input,
-                null);
+                localEnv.Globals.Input);
 
-            var score = localEnv.CryptoAnalysis.CalculateAggregateScore(results, localEnv.Globals.UseMetricScoring);
+            AssertWeightsMatchExpectedMode(localEnv);
+
+            var score = localEnv.CryptoAnalysis.CalculateAggregateScore(results, localEnv.Globals.ScoringMode);
 
             ColorConsole.WriteLine($"<yellow>GR:{rounds,-2}</yellow> → Score: <green>{score:F4}</green>");
 
@@ -1960,8 +2967,8 @@ public partial class Handlers
             }
         }
 
-        // ✅ Restore best GR for reporting
-        localEnv.Crypto.Options.Rounds = bestGR;
+        // ✅ Restore best GR for continuity
+        localEnv.Globals.UpdateSetting("rounds", bestGR);
 
         if (bestMetrics != null)
         {
@@ -1976,7 +2983,7 @@ public partial class Handlers
                 analysisResults: bestMetrics,
                 isReversible: true,
                 options: HeaderOptions.AllAnalysis | HeaderOptions.Mode | HeaderOptions.InputType |
-                         HeaderOptions.MetricScoring | HeaderOptions.PassCount
+                         HeaderOptions.ScoringMode | HeaderOptions.PassCount
             );
 
             List<string> report = localEnv.CryptoAnalysis.CryptAnalysisReport(localEnv.Crypto, bestMetrics);
@@ -1991,9 +2998,28 @@ public partial class Handlers
         return ("⚠️ No valid GR setting improved the score.", ConsoleColor.Yellow);
     }
 
-    public static (string, ConsoleColor) RunSequenceHandler(ExecutionEnvironment localEnv, List<string> sequence)
+
+    public static (string, ConsoleColor) RunSequenceHandler(ExecutionEnvironment parentEnv, string[] args, List<string> sequence)
     {
-        // ✅ LocalEnvironment parses the sequence and sets the Global Rounds, which are then used throughout localStateEnv
+        // 🔐 Determine password
+        string password;
+        var passwordIndex = Array.IndexOf(args, "--password");
+        if (passwordIndex >= 0 && passwordIndex < args.Length - 1)
+        {
+            // Join all remaining args after --password into one space-separated string
+            password = string.Join(" ", args.Skip(passwordIndex + 1));
+        }
+        else
+        {
+            // Fallback to parent environment password
+            password = GlobalsInstance.Password;
+        }
+
+        // ✅ Create a fresh local execution environment with the selected password
+        var localEnv = new ExecutionEnvironment(parentEnv, password);
+        //var localEnv = new ExecutionEnvironment(password, parentEnv.Crypto.Options);
+
+        // ✅ Parse the sequence and run it in a scoped environment
         using (var localStateEnv = new LocalEnvironment(localEnv, sequence))
         {
             return RunSequence(localEnv, localStateEnv.ParsedSequence);
@@ -2001,105 +3027,108 @@ public partial class Handlers
     }
 
     public static (string, ConsoleColor) RunSequence(ExecutionEnvironment localEnv,
-        SequenceHelper.ParsedSequence parsedSequence)
+    SequenceHelper.ParsedSequence parsedSequence)
     {
         SequenceHelper seqHelper = new(localEnv.Crypto);
-        var sequence = seqHelper.GetIDs(parsedSequence);
+        var globalRounds = parsedSequence.SequenceAttributes.TryGetValue("GR", out var grStr)
+                   && int.TryParse(grStr, out var parsedGR) ? parsedGR : localEnv.Globals.Rounds;
+        var sequence = parsedSequence.Transforms.Select(t => t.ID).ToArray();
+        var trs = parsedSequence.Transforms.Select(t => (byte)t.TR).ToArray();
+
         var formattedSequence = seqHelper.FormattedSequence<string>(parsedSequence,
             SequenceFormat.ID | SequenceFormat.TRounds | SequenceFormat.RightSideAttributes,
             2, true);
-        if (sequence.Count == 0) return ("No transforms in sequence. Add transforms before running.", ConsoleColor.Red);
+        if (sequence.Length == 0)
+            return ("No transforms in sequence. Add transforms before running.", ConsoleColor.Red);
 
         try
         {
             // Reset metrics and contenders before starting
             localEnv.CryptoAnalysis.Initialize();
 
-            Console.WriteLine(
-                $"\n--- Executing Transformations (GRounds: {localEnv.Crypto.Options.Rounds})---\n");
+            Console.WriteLine($"\n--- Executing Transformations (GRounds: {globalRounds})---\n");
 
             const int labelWidth = 16;
-            const int rows = 1; // Display one row of bits/bytes for simplicity
-            const int columns = 16; // 16 bytes per row
-            const string mode = "BITS"; // Default to bit visualization
-            const string format = "HEX"; // Default format is HEX
+            const int rows = 1;
+            const int columns = 16;
+            const string mode = "BITS";
+            const string format = "HEX";
 
-            // Make a copy of inputData for safe visualization
             var inputCopy = localEnv.Globals.Input.ToArray();
 
-            // Display Input Data (ensure Format() never modifies inputData)
+            // 🧾 Input Display
             ColorConsole.WriteLine(
                 Field("Input Data", labelWidth) +
-                Visualizer.Format(inputCopy, inputCopy, mode, rows, columns,
-                    format: format)[0]);
+                Visualizer.Format(inputCopy, inputCopy, mode, rows, columns, format: format)[0]);
 
-            // Encrypt using the sequence
-            var stopwatch = Stopwatch.StartNew(); // Start the stopwatch
-            var encrypted = localEnv.Crypto.Encrypt(sequence.ToArray(), localEnv.Globals.Input);
+            // 🎯 Build InputProfile with auto-resolved TRs
+            var profile = InputProfiler.CreateInputProfile(name: "sequence",
+                sequence: sequence.ToArray(),
+                tRs: trs,
+                globalRounds: globalRounds
+            );
+
+            // 🔐 Encrypt using profile
+            var stopwatch = Stopwatch.StartNew();
+            var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            stopwatch.Stop();
+
             var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
 
-            // Make a copy of inputData before passing it to Format()
             var inputForComparison = localEnv.Globals.Input.ToArray();
             ColorConsole.WriteLine(
                 Field("Encrypted Data", labelWidth) +
-                Visualizer.Format(inputForComparison, payload, mode, rows, columns,
-                    format: format)[0]);
+                Visualizer.Format(inputForComparison, payload, mode, rows, columns, format: format)[0]);
 
-            // Bit Comparison (ensure Format() doesn’t alter inputData)
-            var bitComparisonRows = Visualizer.Format(inputForComparison, payload, mode, rows,
-                columns, format: format);
+            var bitComparisonRows = Visualizer.Format(inputForComparison, payload, mode, rows, columns, format: format);
             ColorConsole.WriteLine(
                 Field("Bit Comparison", labelWidth) +
                 string.Join(" ", bitComparisonRows));
 
-            // Decrypt using the reverse sequence
-            var reverseSequence = GenerateReverseSequence(localEnv.Crypto, sequence.ToArray());
-            var decrypted = localEnv.Crypto.Decrypt(reverseSequence, encrypted);
-            stopwatch.Stop(); // Stop the stopwatch after sequence execution
+            // 🔓 Decrypt (reverse handled internally)
+            var decrypted = localEnv.Crypto.Decrypt(encrypted);
 
-            // Ensure inputData isn't altered by Format()
             var inputForDecryptionComparison = localEnv.Globals.Input.ToArray();
             ColorConsole.WriteLine(
                 Field("Decrypted Data", labelWidth) +
-                Visualizer.Format(inputForDecryptionComparison, decrypted, mode, rows, columns,
-                    format: format)[0]);
+                Visualizer.Format(inputForDecryptionComparison, decrypted, mode, rows, columns, format: format)[0]);
 
-
-            // Reversibility Check
             var isReversible = decrypted!.SequenceEqual(localEnv.Globals.Input);
             var color = isReversible ? "Green" : "Red";
 
-            // Modify a copy of input for Avalanche test
+            // 🧪 Avalanche and Key Dependency
             var (MangoAvalanchePayload, _, MangoKeyDependencyPayload, _) =
                 ProcessAvalancheAndKeyDependency(
-                    localEnv,
+                    localEnv.Crypto,
+                    localEnv.Globals.Input,
                     GlobalsInstance.Password,
-                    sequence.ToList());
+                    profile
+                );
 
             var analysisResults = localEnv.CryptoAnalysis.RunCryptAnalysis(
-                payload,
-                MangoAvalanchePayload,
-                MangoKeyDependencyPayload,
-                localEnv.Globals.Input, null);
+                encryptedData: payload,
+                avalanchePayload: MangoAvalanchePayload,
+                keyDependencyPayload: MangoKeyDependencyPayload,
+                inputData: localEnv.Globals.Input, null);
 
             localEnv.CryptoAnalysis.CryptAnalysisRecordBest(localEnv, analysisResults, sequence.ToList());
 
-            // Display cryptanalysis report
             var header = GenerateHeader(
                 localEnv,
                 formattedSequence: formattedSequence,
                 analysisResults: analysisResults,
                 isReversible: isReversible,
                 options: HeaderOptions.AllAnalysis | HeaderOptions.Mode | HeaderOptions.InputType |
-                         HeaderOptions.MetricScoring | HeaderOptions.PassCount
-            );
+                         HeaderOptions.ScoringMode | HeaderOptions.PassCount);
 
-            List<string> analysis = localEnv.CryptoAnalysis.CryptAnalysisReport(localEnv.Crypto, analysisResults);
-            List<string> timing = new List<string>
-                { $"\n--- Sequence Execution Completed in {stopwatch.Elapsed.TotalSeconds:F2} seconds ---" };
+            var analysis = localEnv.CryptoAnalysis.CryptAnalysisReport(localEnv.Crypto, analysisResults);
+            var timing = new List<string>
+        {
+            $"\n--- Sequence Execution Completed in {stopwatch.Elapsed.TotalMilliseconds:F2} ms ---"
+        };
 
-            // ✅ Report all sections in **one call** (keeps them in the same output file)
-            ReportHelper.Report(localEnv.Globals.ReportFormat, new List<string>[] { header, analysis, timing },
+            ReportHelper.Report(localEnv.Globals.ReportFormat,
+                new List<string>[] { header, analysis, timing },
                 new string[] { localEnv.Globals.ReportFilename! });
 
             Console.WriteLine("\nPress any key to return to the menu...");
@@ -2127,95 +3156,129 @@ public partial class Handlers
     public static (string, ConsoleColor) RunBestFit(ExecutionEnvironment localEnv, SequenceHelper.ParsedSequence parsedSequence)
     {
         SequenceHelper seqHelper = new(localEnv.Crypto);
-        var _sequence = seqHelper.GetIDs(parsedSequence);
-        var format = SequenceFormat.ID | SequenceFormat.InferTRounds | SequenceFormat.InferGRounds |
-                     SequenceFormat.RightSideAttributes;
-        // Reset metrics and contenders before starting
+
+        // 🔍 Extract (ID, TR) tuple array from parsed sequence
+        var originalSequence = parsedSequence.Transforms
+            .Select(t => (ID: t.ID, TR: (byte)t.TR))
+            .ToArray();
+
+        var format = SequenceFormat.ID | SequenceFormat.TRounds | SequenceFormat.InferGRounds | SequenceFormat.RightSideAttributes;
+
+        // 🔄 Reset metrics before running analysis
         localEnv.CryptoAnalysis.Initialize();
+        Console.WriteLine("Running Best Fit...\n");
 
-        Console.WriteLine("Running Best Fit...");
+        // 🔧 Score the original sequence before permutations
+        var globalRounds = parsedSequence.SequenceAttributes.TryGetValue("GR", out var grStr)
+                           && int.TryParse(grStr, out var parsedGR) ? parsedGR : localEnv.Globals.Rounds;
+        var profile = InputProfiler.CreateInputProfile("Original", originalSequence, globalRounds);
+        var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+        var decrypted = localEnv.Crypto.Decrypt(encrypted);
+        var originalValid = decrypted.SequenceEqual(localEnv.Globals.Input);
 
-        // Generate permutations from user-supplied sequence
-        var permutations = GenerateUniquePermutations(_sequence).ToList();
+        Console.WriteLine($"Original sequence: {seqHelper.FormattedSequence(profile.Sequence, format, 2, true)}");
+
+        if (!originalValid)
+            Console.WriteLine("<red>❌ Original sequence failed reversibility.</red>");
+        else
+        {
+            var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
+            var (avalanche, _, keydep, _) = ProcessAvalancheAndKeyDependency(
+                localEnv.Crypto,
+                localEnv.Globals.Input,
+                GlobalsInstance.Password,
+                profile);
+
+            AssertWeightsMatchExpectedMode(localEnv);
+            var originalMetrics = localEnv.CryptoAnalysis.RunCryptAnalysis(payload, avalanche, keydep, localEnv.Globals.Input);
+            var originalScore = localEnv.CryptoAnalysis.CalculateAggregateScore(originalMetrics, localEnv.Globals.ScoringMode);
+
+            ColorConsole.WriteLine($"Original Score: <green>{originalScore:F4}</green>\n");
+        }
+
+        // 🔁 Generate all unique permutations of the full (ID, TR) tuples
+        var permutations = GenerateUniquePermutations(originalSequence).ToList();
         if (!permutations.Any()) return ("No permutations generated. Ensure your sequence is valid.", ConsoleColor.Red);
 
-        // Store results for each permutation
-        List<(byte[], double, List<CryptoAnalysis.AnalysisResult>?)> results = new();
+        List<((byte ID, byte TR)[], double Score, List<CryptoAnalysisCore.AnalysisResult>? Metrics)> results = new();
 
         foreach (var permutation in permutations)
         {
-            Console.WriteLine(
-                $"Testing sequence: {new SequenceHelper(localEnv.Crypto).FormattedSequence(permutation, format, 2, true)}");
+            var testProfile = InputProfiler.CreateInputProfile("BestFitTest", permutation, globalRounds);
 
-            // Test each permutation
-            var metrics = TestSequence(localEnv, permutation);
-            if (metrics == null)
+            Console.WriteLine($"\nTesting sequence:\n{seqHelper.FormattedSequence(testProfile.Sequence, format, 2, true)}");
+
+            var (isValid, score, metrics) = TestAndScorePermutation(localEnv, testProfile);
+
+            if (!isValid)
             {
-                Console.WriteLine(
-                    $"Failed Reversibility Check for sequence: {new SequenceHelper(localEnv.Crypto).FormattedSequence(permutation, SequenceFormat.ID | SequenceFormat.TRounds)}");
+                Console.WriteLine($"<red>❌ Reversibility failed</red>");
                 continue;
             }
 
-            // Calculate aggregate score
-            var score = localEnv.CryptoAnalysis.CalculateAggregateScore(metrics, localEnv.Globals.UseMetricScoring);
-
-            // Add to results
+            ColorConsole.WriteLine($"Score: <green>{score:F4}</green>");
             results.Add((permutation, score, metrics));
         }
 
-        if (!results.Any()) return ("No valid sequences found.", ConsoleColor.Yellow);
+        if (!results.Any()) return ("⚠️ No valid sequences found.", ConsoleColor.Yellow);
 
-        // Find the best scoring sequence
-        var best = results.OrderByDescending(r => r.Item2).First();
+        // 🏆 Find best scoring sequence
+        var best = results.OrderByDescending(r => r.Score).First();
+        var bestSequence = best.Item1;
+        var bestMetrics = best.Metrics;
 
-        // Run analysis on the best sequence
-        var isReversible = true; // TestSequence() above already ensures reversibility
-        var sequence = best.Item1.ToList();
-        var analysisResults = best.Item3;
+        //localEnv.CryptoAnalysis.CryptAnalysisRecordBest(localEnv, bestMetrics!, bestSequence.ToList());
 
-        localEnv.CryptoAnalysis.CryptAnalysisRecordBest(localEnv, best.Item3!, best.Item1.ToList());
-
-        //string formattedSequence = seqHelper.FormattedSequence<string>(parsedSequence,
-        //    SequenceFormat.ID | SequenceFormat.TRounds | SequenceFormat.RightSideAttributes,
-        //    chunks: 2, indent: true);
-
-        // Display cryptanalysis report
         var header = GenerateHeader(
             localEnv,
-            formattedSequence: seqHelper.FormattedSequence(
-                sequence.ToArray(),
-                format,
-                2,
-                true
-            ),
-            analysisResults: analysisResults,
-            isReversible: isReversible,
+            formattedSequence: seqHelper.FormattedSequence(bestSequence, format, 2, true),
+            analysisResults: bestMetrics,
+            isReversible: true,
             options: HeaderOptions.AllAnalysis | HeaderOptions.Mode | HeaderOptions.InputType |
-                     HeaderOptions.MetricScoring | HeaderOptions.PassCount
+                     HeaderOptions.ScoringMode | HeaderOptions.PassCount
         );
 
-        List<string> analysis = localEnv.CryptoAnalysis.CryptAnalysisReport(localEnv.Crypto, analysisResults!);
+        var analysis = localEnv.CryptoAnalysis.CryptAnalysisReport(localEnv.Crypto, bestMetrics!);
+        var commandHeader = GenerateHeader(localEnv, "Run Best Fit", null, HeaderOptions.AllExecution);
 
-        List<string> commandHeader =
-            GenerateHeader(localEnv, "Run Best Fit", null, HeaderOptions.AllExecution);
-        // ✅ Report all sections in **one call** (keeps them in the same output file)
         ReportHelper.Report(localEnv.Globals.ReportFormat,
-            new List<string>[]
-            {
-                commandHeader
-            },
+            new List<string>[] { commandHeader },
             new string[] { localEnv.Globals.ReportFilename! });
 
-        // ✅ Report all sections in **one call** (keeps them in the same output file)
-        ReportHelper.Report(localEnv.Globals.ReportFormat, new List<string>[] { header, analysis },
+        ReportHelper.Report(localEnv.Globals.ReportFormat,
+            new List<string>[] { header, analysis },
             new string[] { localEnv.Globals.ReportFilename! });
 
-        // Pause the output
         Console.WriteLine("\nPress any key to return to the main menu...");
         Console.ReadKey();
 
-        return ("Best Fit sequence found and displayed.", ConsoleColor.Green);
+        return ($"🏁 Best Fit complete. Top score: {best.Score:F4}", ConsoleColor.Green);
     }
+    private static (bool IsValid, double Score, List<CryptoAnalysisCore.AnalysisResult>? Metrics)
+        TestAndScorePermutation(ExecutionEnvironment env, InputProfile profile)
+    {
+        var encrypted = env.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, env.Globals.Input);
+        var decrypted = env.Crypto.Decrypt(encrypted);
+
+        if (!decrypted.SequenceEqual(env.Globals.Input))
+            return (false, 0.0, null);
+
+        var payload = env.Crypto.GetPayloadOnly(encrypted);
+
+        var (avalanche, _, keydep, _) = ProcessAvalancheAndKeyDependency(
+            env.Crypto,
+            env.Globals.Input,
+            GlobalsInstance.Password,
+            profile);
+
+        AssertWeightsMatchExpectedMode(env);
+        var metrics = env.CryptoAnalysis.RunCryptAnalysis(payload, avalanche, keydep, env.Globals.Input);
+        var score = env.CryptoAnalysis.CalculateAggregateScore(metrics, env.Globals.ScoringMode);
+
+        return (true, score, metrics);
+    }
+
+
 
     #endregion Run Best Fit (Munge(A) Interactive
 
@@ -2328,12 +3391,12 @@ public partial class Handlers
 
 
     public static
-        Dictionary<string, List<(List<byte> Sequence, double AggregateScore, List<CryptoAnalysis.AnalysisResult> Metrics
+        Dictionary<string, List<(List<byte> Sequence, double AggregateScore, List<CryptoAnalysisCore.AnalysisResult> Metrics
             )>> CreateCandidateList(
-            Dictionary<string, List<(List<byte> Sequence, double AggregateScore, List<CryptoAnalysis.AnalysisResult>
+            Dictionary<string, List<(List<byte> Sequence, double AggregateScore, List<CryptoAnalysisCore.AnalysisResult>
                 Metrics)>> table)
     {
-        Dictionary<string, List<(List<byte> Sequence, double AggregateScore, List<CryptoAnalysis.AnalysisResult> Metrics
+        Dictionary<string, List<(List<byte> Sequence, double AggregateScore, List<CryptoAnalysisCore.AnalysisResult> Metrics
             )>> refinedTable = new();
 
         foreach (var entry in table)
@@ -2351,14 +3414,14 @@ public partial class Handlers
             {
                 // No valid contenders, just continue
                 refinedTable[dataType] =
-                    new List<(List<byte> Sequence, double AggregateScore, List<CryptoAnalysis.AnalysisResult> Metrics
+                    new List<(List<byte> Sequence, double AggregateScore, List<CryptoAnalysisCore.AnalysisResult> Metrics
                         )>();
                 continue;
             }
 
             var metricNames = firstContender.Metrics.Select(m => m.Name).ToList(); // No hardcoded metric names
 
-            List<(List<byte> Sequence, double AggregateScore, List<CryptoAnalysis.AnalysisResult> Metrics)>
+            List<(List<byte> Sequence, double AggregateScore, List<CryptoAnalysisCore.AnalysisResult> Metrics)>
                 bestTransforms = new();
 
             foreach (var metric in metricNames)

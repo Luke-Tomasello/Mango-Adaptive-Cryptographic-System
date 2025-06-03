@@ -25,6 +25,7 @@ using Mango.Cipher;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
+using Mango.Common;
 
 namespace Mango.Utilities;
 
@@ -108,7 +109,8 @@ public class SequenceHelper
             if (!_cryptoLib.TransformRegistry.TryGetValue(t.ID, out var transform))
                 throw new KeyNotFoundException($"Transform ID {t.ID} not found in registry.");
 
-            var tRounds = inferTRounds ? transform.Rounds : t.TR;
+            //var tRounds = inferTRounds ? transform.Rounds : t.TR;
+            var tRounds = t.TR;
             return FormattedTransform((transform.Name, t.ID, tRounds), format);
         }).ToList();
 
@@ -118,8 +120,10 @@ public class SequenceHelper
 
         if (format.HasFlag(SequenceFormat.InferGRounds) && !parsedSequence.SequenceAttributes.ContainsKey("GR"))
         {
-            var globalRounds = _cryptoLib.Options.Rounds;
-            rightSideAttributes.Add($"(GR:{globalRounds})");
+            // the crypto lib no longer knows anything about 'static' global rounds. All global rounds are now passed
+            //  to crypto lib via a profile
+            //var globalRounds = _cryptoLib.Options.Rounds;
+            //rightSideAttributes.Add($"(GR:{globalRounds})");
         }
 
         if (typeof(T) == typeof(List<string>))
@@ -151,6 +155,28 @@ public class SequenceHelper
         if (format.HasFlag(SequenceFormat.TRounds) || format.HasFlag(SequenceFormat.InferTRounds))
             sb.Append($"(TR:{transform.tRounds})");
         return sb.ToString();
+    }
+    // ✅ Format from (byte ID, byte TR)[]
+    public string FormattedSequence(
+        (byte ID, byte TR)[] sequenceWithRounds,
+        SequenceFormat format,
+        int chunks = 0,
+        bool indent = false)
+    {
+        var parsed = new ParsedSequence();
+
+        foreach (var (id, tr) in sequenceWithRounds)
+        {
+            if (!_cryptoLib.TransformRegistry.TryGetValue(id, out var transform))
+                throw new KeyNotFoundException($"Transform ID {id} not found in registry.");
+
+            parsed.Transforms.Add(new TransformDefinition(transform.Name, id, tr));
+        }
+
+        // the crypto lib no longer knows anything about 'static' global rounds. All global rounds are now passed
+        //  to crypto lib via a profile
+        //parsed.SequenceAttributes["GR"] = _cryptoLib.Options.Rounds.ToString(); // Optional fallback
+        return FormatParsedSequence<string>(parsed, format, chunks, indent);
     }
 
     // ✅ Format from byte[]
@@ -437,7 +463,8 @@ public class SequenceHelper
 
             // ✅ Extract TR (Default to registry value if missing)
             var tr = match.Groups[3].Success ? int.Parse(match.Groups[3].Value)
-                : format.HasFlag(SequenceFormat.InferTRounds) ? _cryptoLib.TransformRegistry[id].Rounds : 1;
+                //: format.HasFlag(SequenceFormat.InferTRounds) ? _cryptoLib.TransformRegistry[id].Rounds : 1;
+                : 1;
 
             parsedSequence.Transforms.Add(new TransformDefinition(name, id, tr));
         }
@@ -451,9 +478,11 @@ public class SequenceHelper
         }
 
         // 🔹 Step 4: Determine and Store GR Value
-        if (!parsedSequence.SequenceAttributes.TryGetValue("GR", out var grValue))
-            if (format.HasFlag(SequenceFormat.InferGRounds)) // ✅ Only infer if explicitly requested
-                parsedSequence.SequenceAttributes["GR"] = _cryptoLib.Options.Rounds.ToString();
+        // the crypto lib no longer knows anything about 'static' global rounds. All global rounds are now passed
+        //  to crypto lib via a profile
+        //if (!parsedSequence.SequenceAttributes.TryGetValue("GR", out var grValue))
+        //    if (format.HasFlag(SequenceFormat.InferGRounds)) // ✅ Only infer if explicitly requested
+        //        parsedSequence.SequenceAttributes["GR"] = _cryptoLib.Options.Rounds.ToString();
 
         return parsedSequence;
     }

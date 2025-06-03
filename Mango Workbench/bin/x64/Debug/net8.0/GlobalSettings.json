@@ -1,15 +1,15 @@
 {
   "Rounds": 3,
-  "MaxSequenceLen": 5,
-  "InputType": "Natural",
+  "MaxSequenceLen": 2,
+  "InputType": "Random",
   "PassCount": 6,
   "DesiredContenders": 1000,
   "Quiet": true,
   "FlushThreshold": 50000,
   "SqlCompact": false,
-  "UseMetricScoring": false,
+  "ScoringMode": "Practical",
   "Mode": "Cryptographic",
   "ReportFormat": "SCR",
-  "ReportFilename": null,
-  "Reporting": "SCR,"
+  "ReportFilename": "temp.rtf",
+  "Reporting": "SCR,temp.rtf"
 }

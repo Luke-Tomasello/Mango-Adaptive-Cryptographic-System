@@ -72,7 +72,7 @@ public static class ColorConsole
             if (color.HasValue) PopColor();
         }
     }
-    
+
     private static readonly HashSet<string> _validColorTags = Enum.GetNames(typeof(ConsoleColor))
         .SelectMany(name => new[] { name.ToLower(), "/" + name.ToLower() })
         .ToHashSet();

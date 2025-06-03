@@ -1,0 +1,317 @@
+{
+  "Contenders": [
+    {
+      "Sequence": [
+        9
+      ],
+      "AggregateScore": 87.54465518490858,
+      "Metrics": [
+        {
+          "Name": "Entropy",
+          "Passed": true,
+          "Score": 7.953563719781507,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "BitVariance",
+          "Passed": false,
+          "Score": 0.50726318359375,
+          "Notes": "Deviation: 0.0070, Acceptable Range: \u00B10.0020."
+        },
+        {
+          "Name": "SlidingWindow",
+          "Passed": true,
+          "Score": 0.9047199803175944,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "FrequencyDistribution",
+          "Passed": true,
+          "Score": 0.746785798896221,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "PeriodicityCheck",
+          "Passed": true,
+          "Score": 1,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "MangosCorrelation",
+          "Passed": true,
+          "Score": 0.024693552588993098,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "PositionalMapping",
+          "Passed": true,
+          "Score": 0.045750209263392905,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "AvalancheScore",
+          "Passed": true,
+          "Score": 49.908447265625,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "KeyDependency",
+          "Passed": true,
+          "Score": 49.6734619140625,
+          "Notes": "Metric is within acceptable range."
+        }
+      ]
+    },
+    {
+      "Sequence": [
+        36
+      ],
+      "AggregateScore": 82.73490326425727,
+      "Metrics": [
+        {
+          "Name": "Entropy",
+          "Passed": false,
+          "Score": 7.949803834334988,
+          "Notes": "Deviation: 0.0025, Acceptable Range: \u00B10.0000."
+        },
+        {
+          "Name": "BitVariance",
+          "Passed": true,
+          "Score": 0.500244140625,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "SlidingWindow",
+          "Passed": false,
+          "Score": 0.9173100924716614,
+          "Notes": "Deviation: 0.0146, Acceptable Range: \u00B10.0050."
+        },
+        {
+          "Name": "FrequencyDistribution",
+          "Passed": true,
+          "Score": 0.7395963544922037,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "PeriodicityCheck",
+          "Passed": true,
+          "Score": 1,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "MangosCorrelation",
+          "Passed": true,
+          "Score": 0.013732013139493125,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "PositionalMapping",
+          "Passed": true,
+          "Score": 0.049830845424107144,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "AvalancheScore",
+          "Passed": true,
+          "Score": 49.9908447265625,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "KeyDependency",
+          "Passed": true,
+          "Score": 49.9359130859375,
+          "Notes": "Metric is within acceptable range."
+        }
+      ]
+    },
+    {
+      "Sequence": [
+        6
+      ],
+      "AggregateScore": 78.93609679765895,
+      "Metrics": [
+        {
+          "Name": "Entropy",
+          "Passed": false,
+          "Score": 7.943610714786316,
+          "Notes": "Deviation: 0.0087, Acceptable Range: \u00B10.0000."
+        },
+        {
+          "Name": "BitVariance",
+          "Passed": true,
+          "Score": 0.5006103515625,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "SlidingWindow",
+          "Passed": false,
+          "Score": 0.9142569480862393,
+          "Notes": "Deviation: 0.0116, Acceptable Range: \u00B10.0050."
+        },
+        {
+          "Name": "FrequencyDistribution",
+          "Passed": false,
+          "Score": 0.7216402851356271,
+          "Notes": "Deviation: 0.0210, Acceptable Range: \u00B10.0100."
+        },
+        {
+          "Name": "PeriodicityCheck",
+          "Passed": true,
+          "Score": 1,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "MangosCorrelation",
+          "Passed": true,
+          "Score": 0.010289662152629105,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "PositionalMapping",
+          "Passed": true,
+          "Score": 0.03997802734375006,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "AvalancheScore",
+          "Passed": true,
+          "Score": 49.603271484375,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "KeyDependency",
+          "Passed": true,
+          "Score": 49.4354248046875,
+          "Notes": "Metric is within acceptable range."
+        }
+      ]
+    },
+    {
+      "Sequence": [
+        4
+      ],
+      "AggregateScore": 73.65499194122185,
+      "Metrics": [
+        {
+          "Name": "Entropy",
+          "Passed": false,
+          "Score": 7.949497185741268,
+          "Notes": "Deviation: 0.0028, Acceptable Range: \u00B10.0000."
+        },
+        {
+          "Name": "BitVariance",
+          "Passed": false,
+          "Score": 0.481475830078125,
+          "Notes": "Deviation: 0.0188, Acceptable Range: \u00B10.0020."
+        },
+        {
+          "Name": "SlidingWindow",
+          "Passed": false,
+          "Score": 0.8694970045041179,
+          "Notes": "Deviation: 0.0332, Acceptable Range: \u00B10.0050."
+        },
+        {
+          "Name": "FrequencyDistribution",
+          "Passed": true,
+          "Score": 0.7367407742891524,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "PeriodicityCheck",
+          "Passed": true,
+          "Score": 1,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "MangosCorrelation",
+          "Passed": true,
+          "Score": -0.007168270664519355,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "PositionalMapping",
+          "Passed": true,
+          "Score": 0.03502546037946433,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "AvalancheScore",
+          "Passed": true,
+          "Score": 49.6246337890625,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "KeyDependency",
+          "Passed": true,
+          "Score": 49.639892578125,
+          "Notes": "Metric is within acceptable range."
+        }
+      ]
+    },
+    {
+      "Sequence": [
+        5
+      ],
+      "AggregateScore": 73.65063013568887,
+      "Metrics": [
+        {
+          "Name": "Entropy",
+          "Passed": false,
+          "Score": 7.9500120744907585,
+          "Notes": "Deviation: 0.0023, Acceptable Range: \u00B10.0000."
+        },
+        {
+          "Name": "BitVariance",
+          "Passed": false,
+          "Score": 0.481475830078125,
+          "Notes": "Deviation: 0.0188, Acceptable Range: \u00B10.0020."
+        },
+        {
+          "Name": "SlidingWindow",
+          "Passed": false,
+          "Score": 0.8681586788111146,
+          "Notes": "Deviation: 0.0345, Acceptable Range: \u00B10.0050."
+        },
+        {
+          "Name": "FrequencyDistribution",
+          "Passed": true,
+          "Score": 0.7395377644035992,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "PeriodicityCheck",
+          "Passed": true,
+          "Score": 1,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "MangosCorrelation",
+          "Passed": true,
+          "Score": 0.014675271117762385,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "PositionalMapping",
+          "Passed": true,
+          "Score": 0.033054896763392856,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "AvalancheScore",
+          "Passed": true,
+          "Score": 49.5941162109375,
+          "Notes": "Metric is within acceptable range."
+        },
+        {
+          "Name": "KeyDependency",
+          "Passed": true,
+          "Score": 50.164794921875,
+          "Notes": "Metric is within acceptable range."
+        }
+      ]
+    }
+  ],
+  "Length": 2,
+  "Transforms": "AQIEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMg==",
+  "Sequence": "AQE="
+}

@@ -32,25 +32,25 @@ REM ==============================
 REM 🔹 Combined Input Processing
 REM ==============================
 echo Running L%SEQ_LEN% (FailDB: %CREATE_FAIL_DB%) for Combined Input...
-Mango.exe -RunCommand "run munge(-restore)" -ExitJobComplete -maxSequenceLen %SEQ_LEN% -inputType Combined -passCount 6 -quiet -mode Cryptographic %FAILDB_FLAG%
+Mango.exe -RunCommand "run munge(--no-cutlist --remove-inverse)" -ExitJobComplete -maxSequenceLen %SEQ_LEN% -inputType Combined -passCount 6 -quiet -mode Cryptographic %FAILDB_FLAG%
 
 REM ==============================
 REM 🔹 Random Input Processing
 REM ==============================
 echo Running L%SEQ_LEN% (FailDB: %CREATE_FAIL_DB%) for Random Input...
-Mango.exe -RunCommand "run munge(-restore)" -ExitJobComplete -maxSequenceLen %SEQ_LEN% -inputType Random -passCount 6 -quiet -mode Cryptographic %FAILDB_FLAG%
+Mango.exe -RunCommand "run munge(--no-cutlist --remove-inverse)" -ExitJobComplete -maxSequenceLen %SEQ_LEN% -inputType Random -passCount 6 -quiet -mode Cryptographic %FAILDB_FLAG%
 
 REM ==============================
 REM 🔹 Sequence Input Processing
 REM ==============================
 echo Running L%SEQ_LEN% (FailDB: %CREATE_FAIL_DB%) for Sequence Input...
-Mango.exe -RunCommand "run munge(-restore)" -ExitJobComplete -maxSequenceLen %SEQ_LEN% -inputType Sequence -passCount 6 -quiet -mode Cryptographic %FAILDB_FLAG%
+Mango.exe -RunCommand "run munge(--no-cutlist --remove-inverse)" -ExitJobComplete -maxSequenceLen %SEQ_LEN% -inputType Sequence -passCount 6 -quiet -mode Cryptographic %FAILDB_FLAG%
 
 REM ==============================
 REM 🔹 Natural Input Processing
 REM ==============================
 echo Running L%SEQ_LEN% (FailDB: %CREATE_FAIL_DB%) for Natural Input...
-Mango.exe -RunCommand "run munge(-restore)" -ExitJobComplete -maxSequenceLen %SEQ_LEN% -inputType Natural -passCount 6 -quiet -mode Cryptographic %FAILDB_FLAG%
+Mango.exe -RunCommand "run munge(--no-cutlist --remove-inverse)" -ExitJobComplete -maxSequenceLen %SEQ_LEN% -inputType Natural -passCount 6 -quiet -mode Cryptographic %FAILDB_FLAG%
 
 REM 🕒 Calculate elapsed time
 set end=%TIME%

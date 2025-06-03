@@ -22,6 +22,7 @@
  * =============================================
  */
 
+using Mango.AnalysisCore;
 using Mango.Utilities;
 using System.Data.SQLite;
 using System.Text;

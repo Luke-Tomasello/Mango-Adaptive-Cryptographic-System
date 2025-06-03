@@ -24,16 +24,18 @@
  */
 
 using Mango.Adaptive;
+using Mango.AnalysisCore;
 using Mango.Cipher;
 using Mango.Utilities;
 using Newtonsoft.Json;
+using System.Text;
 using System.Text.RegularExpressions;
 using static Mango.Cipher.CryptoLib;
 using static Mango.Utilities.SequenceHelper;
 using static Mango.Utilities.TestInputGenerator;
 using static Mango.Utilities.UtilityHelpers;
 using static Mango.Workbench.Handlers;
-
+using Mango.Common;
 namespace Mango.Workbench;
 
 public static class MangoConsole
@@ -43,11 +45,11 @@ public static class MangoConsole
         try
         {
             // Immediate mode test
-            //args = new string[] { "-RunCommand", "run munge", "-ExitJobComplete", "-maxSequenceLen", "4", "-inputType", "Random", "-passCount", "6", "-quiet", "-useMetricScoring", "-mode", "Cryptographic", "-createMungeFailDB", "-logMungeOutput" };
-            //args = new string[] { "-RunCommand", "run munge", "-RunCommand", "clear sequence", "-ExitJobComplete", "-maxSequenceLen", "2", "-inputType", "Random", "-passCount", "6", "-quiet", "-useMetricScoring", "-mode", "Cryptographic" };
+            //args = new string[] { "-RunCommand", "run munge", "-ExitJobComplete", "-maxSequenceLen", "4", "-inputType", "Random", "-passCount", "6", "-quiet", "-scoringMode", "Practical", "-mode", "Cryptographic", "-createMungeFailDB", "-logMungeOutput" };
+            //args = new string[] { "-RunCommand", "run munge", "-RunCommand", "clear sequence", "-ExitJobComplete", "-maxSequenceLen", "2", "-inputType", "Random", "-passCount", "6", "-quiet", "-scoringMode", "Practical", "-mode", "Cryptographic" };
             //args = new string[] { "-RunCommand", "run best fit batch autotune(-L3 -P0 -DC -MF)", "-logMungeOutput", "-ExitJobComplete" };
             //args = new string[] { "-Rounds", "7" };
-            //args = new string[] { "-RunCommand", "run munge(-L5 -restore)", "-ExitJobComplete", "-maxSequenceLen", "5", "-inputType", "Combined", "-passCount", "6", "-quiet", "-useMetricScoring", "-mode", "Cryptographic", "-createMungeFailDB" };
+            //args = new string[] { "-RunCommand", "run munge(-L5 -restore)", "-ExitJobComplete", "-maxSequenceLen", "5", "-inputType", "Combined", "-passCount", "6", "-quiet", "-scoringMode", "Practical", "-mode", "Cryptographic", "-createMungeFailDB" };
             //args = new string[] { "-RunCommand", "run munge(-restore)", "-ExitJobComplete", "-maxSequenceLen", "4", "-inputType", "Combined", "-passCount", "6", "-quiet", "-mode", "Cryptographic", };
 
             Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -55,10 +57,7 @@ public static class MangoConsole
 
 
             // ✅ Initialize the cryptographic library with predefined options
-            var options = new CryptoLibOptions(
-                sessionIv: new byte[] { 0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F, 0x70, 0x81, 0x92, 0xA3, 0xB4, 0xC5 },
-                behavior: Behaviors.AssignBenchmarkValues
-            );
+            var options = new CryptoLibOptions(Scoring.MangoSalt);
 
             // ✅ One-time initialization: Preloads all test input data into memory to eliminate runtime disk I/O and ensure thread safety.
             InitializeInputData();
@@ -70,6 +69,9 @@ public static class MangoConsole
             // // This measures a representative transform and records the timing for normalization.
             EstablishCurrentBenchmarkTime(localEnv);
 
+            // ✅ Load the benchmark cache
+            LoadBenchmarkCache();
+
             // ✅ Retrieve the pre-established baseline time from the transform registry.
             // // This serves as a consistent reference point (e.g., ID 35) for future comparisons.
             SetBenchmarkBaselineTime(localEnv);
@@ -80,8 +82,9 @@ public static class MangoConsole
             // ✅ Apply command-line arguments (may override previous run settings)
             ParseCommandParameters(localEnv, args);
 
-            // ✅ Before running the console, run a couple of simple regression tests of core components
-            RegressionTests.RunRegressionTests(localEnv);
+            // ✅ Before running the console, run regression tests of core components
+            if (IsInteractiveWorkbench(localEnv))
+                RegressionTests.RunRegressionTests(localEnv);
 
             // ✅ Run the interactive console
             RunConsole(localEnv);
@@ -146,7 +149,7 @@ public static class MangoConsole
         ProcessBoolParam(localEnv.Crypto, "-quiet");
         ProcessIntParam(localEnv.Crypto, "-flushThreshold");
         ProcessBoolParam(localEnv.Crypto, "-sqlCompact");
-        ProcessBoolParam(localEnv.Crypto, "-useMetricScoring");
+        ProcessEnumParam<ScoringModes>(localEnv.Crypto, "-scoringMode");
         ProcessEnumParam<OperationModes>(localEnv.Crypto, "-mode");
         ProcessBoolParam(localEnv.Crypto, "-createMungeFailDB");
         ProcessBoolParam(localEnv.Crypto, "-exitJobComplete");
@@ -327,7 +330,6 @@ public static class MangoConsole
 
     #endregion Commandline argument parsing
 
-#if true
     public static class CommandRegistry
     {
         public static Dictionary<string, (
@@ -353,7 +355,7 @@ public static class MangoConsole
                 },
                 {
                     "run sequence",
-                    (args => RunSequenceHandler(localEnv, sequence), 2, "Execute the current sequence of transforms.",
+                    (args => RunSequenceHandler(localEnv, args, sequence), 2, "Execute the current sequence of transforms.",
                         "run sequence", experimental: false)
                 },
                 {
@@ -371,7 +373,7 @@ public static class MangoConsole
                 },
                 {
                     "optimize sequence",
-                    (args => RunBTRHandler(localEnv, seq.GetIDs(sequence)), 2,
+                    (args => RunBTRHandler(localEnv, args, seq.GetIDs(sequence)), 2,
                         "Optimizes the sequence by adjusting transform rounds (TR) and global rounds (GR) to maximize performance.",
                         "optimize sequence", experimental: false)
                 },
@@ -415,12 +417,12 @@ public static class MangoConsole
                 },
                 {
                     "get",
-                    (args => GetSettingsHandler(args), 1, "Retrieve the value of a setting.", "get TRounds",
+                    (args => GetSettingsHandler(args), 1, "Retrieve the value of a setting.", "get Rounds",
                         experimental: false)
                 },
                 {
                     "set",
-                    (args => SetSettingsHandler(localEnv, args), 1, "Update the value of a setting.", "set TRounds 10",
+                    (args => SetSettingsHandler(localEnv, args), 1, "Update the value of a setting.", "set Rounds 10",
                         experimental: false)
                 },
                 {
@@ -480,6 +482,16 @@ public static class MangoConsole
                         "run comparative throughput", experimental: false)
                 },
                 {
+                    "run crypto showdown",
+                    (args => RunCryptoShowdown(localEnv), 3, "Compare Mango and AES across all input types, showing score, pass count, and performance.",
+                        "run crypto showdown", experimental: false)
+                },
+                {
+                    "run metric breakdown",
+                    (args => RunMetricBreakdown(localEnv), 3, "Display Mango and AES metric scores across all input types.",
+                        "run metric breakdown", experimental: true)
+                },
+                {
                     "load user data",
                     (args => LoadUserDataHandler(localEnv, args), 3, "Load a custom input file (up to 10MB) for encryption and analysis.",
                         "load user data <file name> [-max bytes]", experimental: false)
@@ -494,13 +506,67 @@ public static class MangoConsole
                     (args => RunAutoWeightTunerHandler(localEnv), 4, "Automatically tune weights.",
                         "run auto weight tuner", experimental: true)
                 },
-
+                {
+                    "say",
+                    (args => Say(args), 1, "Output this text to the status line",
+                        "say my dog has fleas!", experimental: true)
+                },
+                {
+                    "run classification",
+                    (args => RunClassification(localEnv, args), 2, "Automatically selects the best profile for the current data.",
+                        "run classification", experimental: false)
+                },
+                {
+                    "load profile",
+                    (args => LoadProfile(localEnv, args), 2, "Loads the named profile and sets it as the current sequence.",
+                        "load profile <name>", experimental: false)
+                },
+                {
+                    "save profile",
+                    (args => SaveProfile(localEnv, sequence, args), 2, "Save the current sequence as a named profile.",
+                        "save profile <name>", experimental: false)
+                },
+                {
+                    "replace profile",
+                    (args => ReplaceProfile(localEnv, sequence, args), 2, "Replace the named profile with the current sequence.",
+                        "replace profile <name>", experimental: false)
+                },
+                {
+                    "delete profile",
+                    (args => DeleteProfile(args), 2, "Delete the named profile.",
+                        "delete profile <name>", experimental: false)
+                },
+                {
+                    "rename profile",
+                    (args => RenameProfile(args), 2, "Rename the profile.",
+                        "rename profile <\"old name\"> <\"new name\">", experimental: false)
+                },
+                {
+                    "list profiles",
+                    (args => ListProfiles(localEnv, args), 2, "List all profiles matching pattern.",
+                        "list profiles [pattern]", experimental: false)
+                },
+                {
+                    "touch profiles",
+                    (args => TouchProfiles(localEnv), 2, "Update full fidelity aggregate score for each profile.",
+                        "touch profiles", experimental: true)
+                },
+                {
+                    "assess sequence",
+                    (args => AssessSequence(localEnv, sequence, args, results: null), 2, "Assesses how the current sequence performs across all data types.",
+                        "assess sequence", experimental: false)
+                },
+                {
+                    "select best fast",
+                    (args => SelectBestFast(localEnv, args), 3, "Selects the .Best and .Fast sequences to be used for the Default profiles.",
+                        "select best fast <\"file name\">", experimental: true)
+                },
                 // 🔧 Developer / Admin commands
                 {
                     "run benchmark transforms",
                     (args => BenchmarkTransforms(localEnv, args), 3,
                         "Benchmark all transforms and regenerate performance baselines.", "run benchmark transforms",
-                        experimental: true)
+                        experimental: false)
                 },
                 {
                     "run profile transforms",
@@ -517,50 +583,6 @@ public static class MangoConsole
         }
     }
 
-#else
-        public static class CommandRegistry
-        {
-            public static Dictionary<string, (Func<string[], (string, ConsoleColor)> handler, int tokenCount, string description, string example)> Registry(
-                ExecutionEnvironment localEnv, List<string> sequence)
-            {
-                SequenceHelper seq = new(localEnv.Crypto);
-                return new Dictionary<string, (Func<string[], (string, ConsoleColor)> handler, int tokenCount, string description, string example)>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "add transform", (args => AddTransformHandler(localEnv.Crypto, args,  seq.GetIDs(sequence).ToList()), 2, "Add a transform to the sequence.", "add transform XORTransform") },
-            { "run sequence", (args => RunSequenceHandler(localEnv, sequence), 2, "Execute the current sequence of transforms.", "run sequence") },
-            { "clear sequence", (args => { sequence.Clear(); return ("Sequence cleared.", ConsoleColor.Green); }, 2, "Clear all transforms from the current sequence.", "clear sequence") },
-            { "find best sequence", (args => RunBestFitHandler(localEnv, sequence), 3, "Finds the best-performing sequence by testing all possible orderings of the given transforms.", "find best sequence") },
-            { "optimize sequence", (args => RunBTRHandler(localEnv, seq.GetIDs(sequence)), 2, "Optimizes the sequence by adjusting transform rounds (TR) and global rounds (GR) to maximize performance.", "optimize sequence") },
-            { "optimize sequence gr", (args => RunOptimizeGRHandler(localEnv, sequence, args), 3, "Optimizes the sequence by adjusting global rounds (GR) to maximize performance.", "optimize sequence gr -max 9") },
-            { "batch optimize sequences", (args => RunBTGRBatchHandler(localEnv, args), 3, "Performs sequence optimization (TR/GR tuning) in batch mode across multiple input sequences.", "batch optimize sequences [-L5]") },
-            { "batch optimize + reorder sequences", (args => RunBTGRRBatchHandler(localEnv, args), 5, "Optimizes and reorders sequences in batch mode, testing different transform orders alongside TR/GR tuning.", "batch optimize + reorder sequences") },
-            { "run munge", (args => RunMungeHandler(localEnv, args), 2, "Run the Munge process to evaluate sequences.", "run munge") },
-            { "run smart munge", (args => RunSmartMungeHandler(localEnv, args), 3, "Run the Munge process to evaluate sequences.", "run smart munge") },
-            { "run munge e", (args => RunMungeEHandler(localEnv, args), 3, "Run the Munge process to evaluate sequences.", "run munge e") },
-            { "run munge k", (args => RunMungeKHandler(localEnv, args), 3, "Run the Munge process to evaluate sequences.", "run munge k") },
-            //{ "analyze contenders", (args => AnalyzeContendersHandler(), 2, "After a log summary, analyze results.", "analyze contenders") },
-            { "get", (args => GetSettingsHandler(args), 1, "Retrieve the value of a setting.", "get TRounds") },
-            { "set", (args => SetSettingsHandler(localEnv, args), 1, "Update the value of a setting.", "set TRounds 10") },
-            { "list", (args => ListSettingsHandler(localEnv, args), 1, "List all global settings and their current values.", "list") },
-            { "query", (args => QueryHandler(localEnv, args), 1, "Query system values.", "query") },
-            { "log to screen", (args => LogToScreenHandler(localEnv), 3, "After a Munge, list top sequences.", "log to screen") },
-            { "log to file", (args => LogToFileHandler(localEnv), 3, "After a Munge, log all Contenders to a file.", "log to file") },
-            { "log to sql", (args => LogToSQLHandler(localEnv), 3, "Convert the Contenders to an SQL database.", "log to sql") },
-            { "file to sql", (args => FileToSQLHandler(), 3, "Convert the logfile to an SQL database.", "log to sql") },
-            { "query console", (args => QueryConsoleHandler(localEnv), 2, "Run the SQL Query Console.", "query console") },
-            { "run visualization", (args => VisualizationHandler(localEnv, seq.GetIDs(sequence).ToList(), args), 2, "Run the Visualization functionality.","run visualization [BITS|BYTES] [ROWS N] [COLUMNS N] [OFFSET N]") },
-            { "run analyzer", (args => AnalyzerHandler(), 2, "Run the Analyzer functionality.","run analyzer") },
-            { "run comparative analysis", (args => RunComparativeAnalysisHandler(localEnv, sequence), 3, "Compare analysis results between Mango and AES.", "run comparative analysis") },
-            { "run MangoCipher", (args => MangoCipherHandler(localEnv, args), 2, "Compare analysis results between Mango and AES.", "run MangoCipher") },
-            { "run auto weight tuner", (args => RunAutoWeightTunerHandler(localEnv), 4, "Automatically tune weights.", "run auto weight tuner") },
-            /*  Administrative/Developers  Commands */
-            { "run benchmark transforms", (args => BenchmarkTransforms(localEnv, args), 3, "Benchmark all transforms and regenerate performance baselines.", "run benchmark transforms") },
-            { "run profile transforms", (args => ProfileTransforms(localEnv, args), 3, "Benchmark all transforms and analyze performance baselines.", "run profile transforms inline test") },
-            { "run regression tests", (args => RunRegressionTests(localEnv), 3, "Run the regression suite.", "run regression tests") },
-        };
-            }
-        }
-#endif
     // Updated RunConsole with Natural Language Commands (NLC) Scaffolding
 
     #region Console
@@ -714,7 +736,7 @@ public static class MangoConsole
             if (match.Success)
             {
                 // Load god-sequence based on current input
-                var godProfile = InputProfiler.GetInputProfile(localEnv.Globals.Input);
+                var godProfile = InputProfiler.GetInputProfile(localEnv.Globals.Input, localEnv.Globals.Mode, localEnv.Globals.ScoringMode);
                 SequenceHelper seqHelper = new(localEnv.Crypto);
                 //var selectedSequence = seqHelper.FormattedSequence(godProfile);
                 sequence.Clear();
@@ -743,9 +765,7 @@ public static class MangoConsole
             {
                 if (MenuOptionMap.TryGetValue(selectedOption, out var transform))
                 {
-                    var formattedTransform = transform.Rounds > 1
-                        ? $"{transform.Name}(ID:{transform.Id})(TR:{transform.Rounds})"
-                        : $"{transform.Name}(ID:{transform.Id})";
+                    var formattedTransform = $"{transform.Name}(ID:{transform.Id})";
 
                     var grIndex = sequence.FindIndex(s => s.StartsWith("(GR:"));
                     if (grIndex >= 0)
@@ -838,6 +858,7 @@ public static class MangoConsole
                 key.Equals(string.Join(" ", tokens.Take(tokenCount)), StringComparison.OrdinalIgnoreCase))
             {
                 string[] args = tokens.Skip(tokenCount).ToArray();
+                args = ParseArgsRespectingQuotes(args);
                 try
                 {
                     var result = handler.Invoke(args);
@@ -857,12 +878,47 @@ public static class MangoConsole
 
         return ("Unrecognized command. Type 'help' for a list of commands.", ConsoleColor.Red, sequence);
     }
+    public static string[] ParseArgsRespectingQuotes(string[] tokens)
+    {
+        string input = string.Join(" ", tokens);
+        var args = new List<string>();
+        var current = new StringBuilder();
+        bool inQuotes = false;
 
+        for (int i = 0; i < input.Length; i++)
+        {
+            char c = input[i];
+
+            if (c == '"')
+            {
+                inQuotes = !inQuotes;
+                continue;
+            }
+
+            if (char.IsWhiteSpace(c) && !inQuotes)
+            {
+                if (current.Length > 0)
+                {
+                    args.Add(current.ToString());
+                    current.Clear();
+                }
+            }
+            else
+            {
+                current.Append(c);
+            }
+        }
+
+        if (current.Length > 0)
+            args.Add(current.ToString());
+
+        return args.ToArray();
+    }
     // Dynamically builds and displays the menu of transforms.
     private static readonly Dictionary<int, TransformInfo> MenuOptionMap = new();
     public static void DisplayMenu(ExecutionEnvironment localEnv, List<string> sequence)
     {
-        ColorConsole.WriteLine($"\n===== Mango Console <green>[{localEnv.Globals.Mode}]</green> =====\n");
+        ColorConsole.WriteLine($"\n===== Mango Console <green>[{localEnv.Globals.InputType}/{localEnv.Globals.Rounds}]</green> =====\n");
 
         var transforms = localEnv.Crypto.TransformRegistry.Values
             .OrderBy(t => t.Id)

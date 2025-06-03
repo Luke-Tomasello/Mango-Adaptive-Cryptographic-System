@@ -22,12 +22,14 @@
  * =============================================
  */
 
+using Mango.Adaptive;
 using Mango.Analysis;
+using Mango.AnalysisCore;
 using Mango.Cipher;
 using Mango.Reporting;
 using Mango.Workbench;
 using System.Buffers.Binary;
-using System.ComponentModel.DataAnnotations;
+using System.Collections.Concurrent;
 using System.Data.SQLite;
 using System.Diagnostics;
 using System.Reflection;
@@ -36,45 +38,15 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Mango.Common;
+using static Mango.AnalysisCore.CryptoAnalysisCore;
 using static Mango.Utilities.SequenceHelper;
 using static Mango.Utilities.TestInputGenerator;
+using Contender = Mango.Analysis.Contender;
+using Metric = Mango.AnalysisCore.Metric;
+using static Mango.Common.Scoring;
 
 namespace Mango.Utilities;
-
-public enum OperationModes
-{
-    None = 0x01,
-
-    /// <summary>
-    /// Focuses on cryptographic accuracy and performance.
-    /// </summary>
-    Cryptographic = 0x02,
-    Cryptographic_New = 0x04,
-
-    /// <summary>
-    /// Enables exploratory mode for experimenting with sequences.
-    /// </summary>
-    Exploratory = 0x08,
-    Exploratory_New = 0x10,
-
-    /// <summary>
-    /// Ensures input data is fully neutralized before further transformation.
-    /// This mode prioritizes eliminating all structural patterns, periodicity, and biases,
-    /// effectively "flattening" the data into a maximally uniform state. 
-    /// The goal is to prepare input for subsequent transformations that rely on predictable 
-    /// patterns (e.g., PatternInjectorTx).
-    /// 
-    /// Key Focus:
-    /// ✅ Maximizes entropy to resemble pure randomness.
-    /// ✅ Eliminates frequency imbalances and sliding window correlations.
-    /// ✅ Ensures no residual periodicity remains in the data.
-    /// 
-    /// Ideal use case:
-    /// - As a preprocessing step before injecting structured patterns.
-    /// - When input data exhibits strong biases that interfere with cryptographic operations.
-    /// </summary>
-    Flattening = 0x20
-}
 
 public partial class CutListHelper
 {
@@ -139,7 +111,7 @@ public partial class CutListHelper
 #if DEBUG
     private static bool _fileLocking = false;
 #else
-        private static bool _fileLocking = true;
+    private static bool _fileLocking = true;
 #endif
     public static void Compile(CryptoLib? cryptoLib)
     {
@@ -149,7 +121,7 @@ public partial class CutListHelper
         // 🔄 1. Load existing persistent cutlist (if any)
         LoadCutlistFromJson();
 
-        var searchPattern = "Contenders,-L?-P?-D?-MC-SF.txt";
+        var searchPattern = "Contenders,-L?-P?-D?-MC-SP.txt";
         var directoryPath = _where;
 
         var contenderFiles = Directory.GetFiles(directoryPath, searchPattern)
@@ -254,8 +226,24 @@ public partial class CutListHelper
             foreach (var id in _cryptoLib!.TransformRegistry.Keys)
             {
                 var dataIndex = GetDataIndex(dataType);
-
                 var usedInTop10 = transformsInTopSequences.Contains(id);
+
+                // 🧠 Ensure the cut matrix includes every known transform ID.
+                // This is important for newly added transforms that didn’t exist
+                // when the cutlist JSON was originally created and loaded.
+                //
+                // If a transform ID is missing from the matrix for this key,
+                // we add a default row (cut = true for all data types) so we
+                // can update it incrementally without overwriting existing data.
+                //
+                // ❗ This preserves accumulated results and prevents crashes due to missing keys.
+                if (!_cutMatrixCache[key].ContainsKey(id))
+                {
+                    _cutMatrixCache[key][id] = new byte[NumDataTypes]; // Default: cut from all data types
+                }
+
+                // 🧬 Mark whether this transform appeared in the top 10 contenders
+                // for this specific data type in this specific cut matrix key.
                 _cutMatrixCache[key][id][dataIndex] = usedInTop10 ? (byte)0x01 : (byte)0x00;
             }
 
@@ -283,7 +271,7 @@ public partial class CutListHelper
     {
         messages.Add("\n🔍 Running Sanity Check...");
 
-        var searchPattern = "Contenders,-L?-P?-D?-MC-SF.txt";
+        var searchPattern = "Contenders,-L?-P?-D?-MC-SP.txt";
         var directoryPath = _where;
 
         var contenderFiles = Directory.GetFiles(directoryPath, searchPattern)
@@ -319,7 +307,7 @@ public partial class CutListHelper
 
             foreach (var transformId in transformsInTopSequences)
             {
-                var dataIndex = GetDataIndex(dataType); 
+                var dataIndex = GetDataIndex(dataType);
 
                 if (!_cutMatrixCache[key].ContainsKey(transformId) ||
                     _cutMatrixCache[key][transformId][dataIndex] != 0x01)
@@ -556,7 +544,7 @@ public partial class CutListHelper
         var key = GenerateCutListKey(contenderFileName);
         var dataType = GetDataTypeFromFileName(contenderFileName);
 
-        var dataIndex = GetDataIndex(dataType); 
+        var dataIndex = GetDataIndex(dataType);
 
         var inMemoryTransforms = new List<byte>();
 
@@ -622,7 +610,10 @@ public class LocalEnvironment : IDisposable
         Rsm = new StateManager(localEnv);
         Rsm.PushAllGlobals(); // ✅ Clone all global settings
         Rsm.PushAllTransformRounds(); // ✅ Push all current transform rounds
-        Rsm.PushGlobalRounds(localEnv.Crypto.Options.Rounds); // ✅ Push default global rounds
+        // the crypto lib no longer knows anything about 'static' global rounds. All global rounds are now passed
+        //  to crypto lib via a profile
+        //Rsm.PushGlobalRounds(localEnv.Crypto.Options.Rounds); // ✅ Push default global rounds
+        Rsm.PushGlobalRounds(localEnv.Globals.Rounds); // ✅ Push default global rounds
     }
 
     // 🆕 Overload 2: Clone ExecutionEnvironment and apply additional settings
@@ -651,18 +642,21 @@ public class LocalEnvironment : IDisposable
         var globalRounds = ParsedSequence.SequenceAttributes.TryGetValue("GR", out var grValue) &&
                            int.TryParse(grValue, out var parsedGR)
             ? parsedGR
-            : localEnv.Crypto.Options.Rounds;
+            // the crypto lib no longer knows anything about 'static' global rounds. All global rounds are now passed
+            //  to crypto lib via a profile
+            //: localEnv.Crypto.Options.Rounds;
+            : localEnv.Globals.Rounds;
 
         Rsm.PushAllGlobals();
         Rsm.PushAllTransformRounds();
         Rsm.PushGlobalRounds(globalRounds);
 
-        // ✅ Apply per-transform TR values
-        var (success, errorMessage) = UtilityHelpers.SetTransformRounds(
-            localEnv.Crypto,
-            ParsedSequence.Transforms.Select(t => (t.Name, (int)t.ID, t.TR)).ToList()
-        );
-        if (!success) throw new InvalidOperationException($"Failed to set transform rounds: {errorMessage}");
+        //// ✅ Apply per-transform TR values
+        //var (success, errorMessage) = UtilityHelpers.SetTransformRounds(
+        //    localEnv.Crypto,
+        //    ParsedSequence.Transforms.Select(t => (t.Name, (int)t.ID, t.TR)).ToList()
+        //);
+        //if (!success) throw new InvalidOperationException($"Failed to set transform rounds: {errorMessage}");
 
         // ✅ Apply right-side attributes (Rounds)
         SequenceAttributesHandler sah = new(localEnv);
@@ -676,636 +670,6 @@ public class LocalEnvironment : IDisposable
         Rsm.PopGlobalRounds();
     }
 }
-#if false
-    #region InputProfiler
-    /*
-     * DataEvaluator - High-Speed File Classification & Entropy Analysis
-     * -------------------------------------------------------------------
-     * Author: [Your Name or Team Name]
-     * Organization: Mango Systems
-     * License: MIT (or specify your license)
-     * Created: [Initial Date]
-     * Updated: [Last Modification Date]
-     *
-     * Description:
-     * ------------
-     * DataEvaluator is a high-performance tool for classifying and analyzing binary files.
-     * It leverages Mango Systems' **Multi-Sample Model (MSM)** to rapidly determine 
-     * whether a file is **Natural, Random/Encrypted, or Other** based on structured heuristics.
-     *
-     * MSM Mode (Default):
-     * -------------------
-     * ✅ Smart sampling strategy for high-speed classification.
-     * ✅ Utilizes a **Finite-State Machine (FSM)** for efficient data recognition.
-     * ✅ Avoids unnecessary full-file scans, delivering **100x performance improvements**.
-     *
-     * Classic Mode (-classic):
-     * ------------------------
-     * 🛑 Legacy mode for full-file analysis.
-     * 🛑 Uses exhaustive entropy and pattern detection across large chunks.
-     * 🛑 Significantly slower than MSM but available for edge cases.
-     *
-     * Features:
-     * ---------
-     * ✅ Instant classification for known file types (e.g., ZIP, PDF, EXE, PNG).
-     * ✅ Intelligent sampling for unknown files to minimize processing.
-     * ✅ Multi-Sample Model (MSM) ensures reliable data classification with minimal CPU impact.
-     * ✅ Supports batch processing and benchmarking across multiple files.
-     *
-     * Command-Line Usage:
-     * -------------------
-     * Syntax:
-     *     DataEvaluator <file path|-regression> [iterations] [-classic] [-verbose]
-     *
-     * Parameters:
-     *  - <file path>: Path to a single file for analysis.
-     *  - -regression: Runs analysis on all *.bin files in the current directory.
-     *  - [iterations]: Number of times to benchmark each file (default: 10).
-     *  - -classic: Enables full-file legacy analysis (slow but exhaustive).
-     *  - -verbose: Outputs detailed per-sample statistics.
-     *
-     * Example Usage:
-     * --------------
-     *     DataEvaluator myfile.bin 100
-     *     DataEvaluator -regression -classic -verbose
-     *
-     * Performance Gains (MSM vs. Classic):
-     * ------------------------------------
-     * ✅ Pre-MSM: Large files required full scans, often exceeding seconds per file.
-     * ✅ Post-MSM: Strategic sampling enables **sub-millisecond** classification.
-     * ✅ **100x speed-up** achieved through targeted optimizations.
-     *
-     * Notes:
-     * ------
-     * - **Known file types are instantly classified** without deeper analysis.
-     * - **MSM heuristics dynamically adapt to unknown files**, requiring minimal reads.
-     * - Classic mode (-classic) is only recommended if MSM mode is inconclusive.
-     *
-     * Future Enhancements:
-     * --------------------
-     * - Improved mixed-content detection (e.g., partially encrypted documents).
-     * - Expanded support for additional file signatures.
-     * - ML-based classification for further refinements.
-     *
-     */
-    public record InputProfile(
-        string Name,                         // e.g., "Combined", "Natural", etc. — Workbench-friendly label
-        (byte ID, byte TR)[] Sequence,       // Transform sequence with rounds baked in
-        int GlobalRounds                     // Required by core + Workbench for configuration
-    );
-    class InputProfiler
-    {
-        private static readonly Dictionary<string, InputProfile> BestProfiles = new()
-        {
-            // 🔥 Baseline Comparison: Munge(A)(6) 5 transforms Score: 88.6481693442 / .gs Aggregate Score: 88.7583871621
-            // ChunkedFbTx(ID:40)(TR:1) -> NibbleSwapShuffleInvTx(ID:14)(TR:1) -> NibbleSwapShuffleFwdTx(ID:13)(TR:1) -> MicroBlockSwapInvTx(ID:38)(TR:2) -> ButterflyWithPairsInvTx(ID:30)(TR:1) | (GR:6)
-            { "Combined", new InputProfile("Combined", new (byte, byte)[] {
-                (40,1), (14,1), (13,1), (38,2), (30,1) }, 6) },
-
-            // 🔥 Baseline Comparison: Munge(A)(9) 4 transforms Score: 82.5238611079 / .gs Aggregate Score: 85.9289932009
-            // NibbleInterleaverInvTx(ID:40)(TR:4) -> ButterflyTx(ID:8)(TR:1) -> ChunkedFbTx(ID:41)(TR:2) -> MaskBasedSBoxFwdTx(ID:16)(TR:1) | (GR:1)
-            { "Natural", new InputProfile("Natural", new (byte, byte)[] {
-                (40,4), (8,1), (41,2), (16,1) }, 1) },
-
-            // 🔥 Baseline Comparison: Munge(A)(9) 4 transforms Score: 95.3058486979 / .gs Aggregate Score: 95.3669619537
-            // MicroBlockSwapFwdTx(ID:37)(TR:2) -> MicroBlockSwapInvTx(ID:38)(TR:3) -> ChunkedFbTx(ID:41)(TR:1) -> BitFlipButterflyInvTx(ID:34)(TR:1) | (GR:1)
-            { "Sequence", new InputProfile("Sequence", new (byte, byte)[] {
-                (37,2), (38,3), (41,1), (34,1) }, 1) },
-
-            // 🔥 Baseline Comparison: Munge(A)(9) 4 transforms Score: 88.7070084653 / .gs Aggregate Score: 89.1429701554
-            // ButterflyWithPairsFwdTx(ID:29)(TR:1) -> NibbleInterleaverInvTx(ID:40)(TR:2) -> ChunkedFbTx(ID:41)(TR:1) -> NibbleInterleaverInvTx(ID:40)(TR:2) | (GR:1)
-            { "Random", new InputProfile("Random", new (byte, byte)[] {
-                (29,1), (40,2), (41,1), (40,2) }, 1) }
-        };
-
-        public static InputProfile GetInputProfile(byte[] input)
-        {
-            string classification = ClassificationWorker(input);
-
-            // 🔥 Normalize classification to InputType-consistent naming
-            classification = classification switch
-            {
-                "Random/Encrypted" => "Random",
-                "Media" => "Combined",
-                _ when Enum.TryParse<InputType>(classification, out _) => classification,
-                _ => "Combined"
-            };
-
-            if (!BestProfiles.TryGetValue(classification, out var profile))
-                throw new InvalidOperationException($"No best profile defined for classification: {classification}");
-
-            return profile;
-        }
-
-        static string ClassificationWorker(byte[] data)
-        {
-            int iterations = 1;
-            bool useSampleMode = true;
-            bool verbose = false;
-
-            //Console.WriteLine($"\nAnalyzing: {filePath} ({data.Length} bytes)");
-            //Console.WriteLine($"Running {iterations} iterations for benchmarking...\n");
-
-            var stopwatch = new Stopwatch();
-            Dictionary<string, int> classificationCounts = new();
-            long totalTimeMs = 0;
-            string classification = null;
-
-            for (int i = 0; i < iterations; i++)
-            {
-                stopwatch.Restart();
-
-                double avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow;
-                Dictionary<int, (double, double, double, double, double, double, double)>? windowResults = null;
-
-                if (useSampleMode)
-                {
-                    (classification, avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow, windowResults)
- = AnalyzeDataMSM(data, i, verbose);
-                }
-                else
-                {
-                    (classification, avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow, _) =
- AnalyzeDataClassic(data, i);
-                }
-
-                stopwatch.Stop();
-
-                totalTimeMs += stopwatch.ElapsedMilliseconds;
-                if (!classificationCounts.ContainsKey(classification))
-                    classificationCounts[classification] = 0;
-                classificationCounts[classification]++;
-            }
-
-            return classification;
-            //FormatAnalysisResults(filePath, data.Length, iterations, classificationCounts, totalTimeMs, verbose);
-        }
-        //static void FormatAnalysisResults(string filePath, int totalBytes, int iterations, Dictionary<string, int> classificationCounts, long totalTimeMs, bool verbose)
-        //{
-        //    Console.WriteLine("\n===== Analysis Results =====");
-        //    Console.WriteLine($"Analyzing: {filePath} ({totalBytes} bytes)");
-        //    Console.WriteLine($"Iterations: {iterations}\n");
-
-        //    foreach (var entry in classificationCounts.OrderByDescending(kv => kv.Value))
-        //    {
-        //        Console.WriteLine($"- {entry.Key}: {entry.Value} times");
-        //    }
-
-        //    Console.WriteLine($"\nAverage Execution Time: {totalTimeMs / (double)iterations:F4} ms");
-        //}
-        static double ComputeEntropy(byte[] data)
-        {
-            int[] counts = new int[256];
-            foreach (byte b in data) counts[b]++;
-            double entropy = 0;
-            foreach (int count in counts)
-            {
-                if (count == 0) continue;
-                double probability = count / (double)data.Length;
-                entropy -= probability * Math.Log2(probability);
-            }
-            return entropy;
-        }
-        static double ComputeUniqueness(byte[] data)
-        {
-            return data.Distinct().Count() / (double)data.Length;
-        }
-        static double ComputePeriodicity(byte[] data)
-        {
-            int periodicityCount = 0;
-            for (int i = 0; i < data.Length - 1; i++)
-                if (data[i] == data[i + 1]) periodicityCount++;
-            return periodicityCount / (double)data.Length;
-        }
-        static double ComputeByteDeviation(byte[] data)
-        {
-            int[] counts = new int[256];
-            foreach (byte b in data) counts[b]++;
-            double avg = counts.Average();
-            double stddev = Math.Sqrt(counts.Average(x => Math.Pow(x - avg, 2)));
-            return stddev / avg;
-        }
-        static double ComputeSlidingWindowSimilarity(byte[] data)
-        {
-            int matchCount = 0, totalCount = 0;
-            for (int i = 0; i < data.Length - 8; i += 8)
-            {
-                if (data[i] == data[i + 4]) matchCount++;
-                totalCount++;
-            }
-            return matchCount / (double)totalCount;
-        }
-        private static bool IsSequenceData(byte[] window)
-        {
-            if (window == null || window.Length < 3) // Need at least 3 bytes
-                return false;
-
-            // Calculate the initial stride, handling potential overflow/underflow.
-            int stride = (window[1] - window[0] + 256) % 256;
-
-            // Stride of 0 is NOT a sequence (all bytes the same).
-            if (stride == 0)
-                return false;
-
-            const int strideTolerance = 2; // Allow stride variations up to ±2
-
-            // Check for consistent stride across the entire window.
-            for (int i = 2; i < window.Length; i++)
-            {
-                int currentStride = (window[i] - window[i - 1] + 256) % 256;
-                if (Math.Abs(currentStride - stride) > strideTolerance)
-                {
-                    return false; // Inconsistent stride beyond allowed tolerance
-                }
-            }
-
-            return true; // Consistent stride found within tolerance
-        }
-
-        private static double ComputePercentAlphaAndWhite(byte[] data)
-        {
-            int count = data.Count(b => (b >= 'a' && b <= 'z') || b == ' ');
-            return count / (double)data.Length;
-        }
-        private static double ComputeRLECompressionRatio(byte[] data)
-        {
-            if (data.Length == 0) return 1.0; // Avoid division by zero
-
-            List<(byte value, int count)> rleEncoded = new();
-            byte lastByte = data[0];
-            int count = 1;
-
-            for (int i = 1; i < data.Length; i++)
-            {
-                if (data[i] == lastByte)
-                {
-                    count++;
-                }
-                else
-                {
-                    rleEncoded.Add((lastByte, count));
-                    lastByte = data[i];
-                    count = 1;
-                }
-            }
-            rleEncoded.Add((lastByte, count)); // Final sequence
-
-            double compressedSize = rleEncoded.Count * 2; // Each entry = (byte, count)
-            return compressedSize / data.Length; // RLE Compression Ratio
-        }
-        static (string classification, double randomScore, double naturalScore) Score(double avgEntropy, double avgUniqueness, double avgByteDeviation, double avgPeriodicity, double avgSlidingWindow)
-        {
-            double randomScore = 0, naturalScore = 0;
-
-            // Entropy Contribution (Boost Random if >7.0, Override Natural if >7.2)
-            randomScore += Math.Min(1.5, (avgEntropy - 7.0) / 0.4);  // Boosts when >7.0, caps at 1.5
-            naturalScore += Math.Max(0.0, (6.5 - avgEntropy) / 0.5);  // Penalizes if entropy <6.5
-
-            // Strong override: If entropy is >7.2, random wins outright
-            if (avgEntropy > 7.2) naturalScore = 0;
-
-            // Uniqueness Contribution
-            randomScore += Math.Min(1.0, avgUniqueness / 0.9); // High uniqueness → favors random
-
-            // Byte Deviation Contribution
-            randomScore += 1.0 - Math.Min(1.0, avgByteDeviation / 0.5); // Adjusted threshold
-
-            // Periodicity Contribution
-            naturalScore += Math.Min(1.0, avgPeriodicity / 0.07); // Loosened sensitivity
-
-            // Sliding Window Contribution
-            naturalScore += Math.Min(1.0, avgSlidingWindow / 0.07); // Loosened threshold
-
-            // Normalize scores (keep it between 0 and 1)
-            randomScore = Math.Min(1.0, Math.Max(0.0, randomScore));
-            naturalScore = Math.Min(1.0, Math.Max(0.0, naturalScore));
-
-            // Determine classification
-            string classification = (randomScore >= 0.8) ? "Random/Encrypted" :
-                (naturalScore >= 0.8) ? "Natural" :
-                "Combined";
-
-            return (classification, randomScore, naturalScore);
-        }
-        static (string classification, double avgEntropy, double avgUniqueness, double avgByteDeviation, double avgPeriodicity, double avgSlidingWindow, Dictionary<int, (double, double, double, double, double)>? windowResults) AnalyzeDataClassic(byte[] data, int iteration)
-        {
-            const int sampleSize = 4096;
-            var random = new Random();
-            List<byte[]> samples = new()
-            {
-                data.Take(Math.Min(sampleSize, data.Length)).ToArray(), // Start
-                data.Skip(Math.Max(0, data.Length / 2 - sampleSize / 2)).Take(sampleSize).ToArray(), // Middle
-                data.Skip(Math.Max(0, data.Length - sampleSize)).Take(sampleSize).ToArray(), // End
-                data.OrderBy(_ => random.Next()).Take(sampleSize).ToArray() // Random bytes
-            };
-
-            double avgEntropy = samples.Average(ComputeEntropy);
-            double avgUniqueness = samples.Average(ComputeUniqueness);
-            double avgPeriodicity = samples.Average(ComputePeriodicity);
-            double avgByteDeviation = samples.Average(ComputeByteDeviation);
-            double avgSlidingWindow = samples.Average(ComputeSlidingWindowSimilarity);
-
-            var (classification, _, _) =
- Score(avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow);
-
-            return (classification, avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow, null);
-        }
-        #region AnalyzeDataMSM
-
-        enum State
-        {
-            START,
-            CHECK_ALPHA_WHITE,
-            CHECK_ENTROPY,
-            CHECK_RLE,
-            FULL_ANALYSIS,
-            CLASSIFY_NATURAL,
-            CLASSIFY_RANDOM,
-            CHECK_SEQUENCE,
-            CLASSIFY_OTHER
-        }
-        static (string classification, double avgEntropy, double avgUniqueness, double avgByteDeviation, double avgPeriodicity, double avgSlidingWindow, Dictionary<int, (double, double, double, double, double, double, double)>? windowResults) AnalyzeDataMSM(byte[] data, int iteration, bool verbose)
-        {
-            int dataSize = data.Length;
-            int windowSize = Math.Min(1024, dataSize); // If file is smaller than default, adjust window size
-            int stepSize = 512;
-            Dictionary<int, (double, double, double, double, double, double, double)> windowResults = new();
-
-            // === Integration Before FSM ===
-            string fileType = KnownFileType(data);
-            if (fileType != "Unknown")
-            {
-                string classification = "Other"; // Default for structured file types
-
-                switch (fileType)
-                {
-                    case "HTML":
-                    case "TXT":
-                    case "CSV":
-                    case "XML":
-                    case "SQL":
-                    case "SVG":
-                        classification = "Natural";
-                        break;
-
-                    case "JPG":
-                    case "PNG":
-                    case "GIF":
-                    case "BMP":
-                    case "MP4":
-                    case "MKV":
-                    case "MP3":
-                    case "WAV":
-                        classification = "Media";
-                        break;
-
-                    case "ZIP":
-                    case "RAR":
-                    case "7Z":
-                    case "GZ":
-                        classification = "Random/Encrypted";
-                        break;
-
-                    case "EXE":
-                    case "DLL":
-                    case "ISO":
-                    case "PDF":
-                        classification = "Other";
-                        break;
-                }
-                if (iteration == 0)
-                    Console.WriteLine($"[Known File Type Detected] {fileType} → Classified as {classification}");
-                return (classification, 0, 0, 0, 0, 0, null);
-            }
-
-            List<int> sampleOffsets = new() { 0, dataSize - windowSize, dataSize / 2 };
-            for (int i = 1; i <= 2; i++)
-            {
-                int nextStart = i * windowSize;
-                int nextEnd = dataSize - ((i + 1) * windowSize);
-                if (nextStart + windowSize <= dataSize) sampleOffsets.Add(nextStart);
-                if (nextEnd >= 0) sampleOffsets.Add(nextEnd);
-            }
-
-            Dictionary<string, int> classificationStreak = new();
-            int sequenceWindows = 0, randomWindows = 0, naturalWindows = 0, combinedWindows = 0;
-
-            for (int start = 0; start + windowSize <= data.Length; start += stepSize)
-            {
-                byte[] window = data.Skip(start).Take(windowSize).ToArray();
-
-
-                double alphaWhite = 0.0, entropy = 0.0, rleRatio = 1.0;
-                double periodicity = 0.0, uniqueness = 0.0, byteDeviation = 0.0, slidingWindow = 0.0;
-
-                string classification = "Other";
-                bool done = false;
-                State state = State.START;
-
-                while (!done)
-                {
-                    switch (state)
-                    {
-                        case State.START:
-                            state = State.CHECK_SEQUENCE;
-                            break;
-
-                        case State.CHECK_SEQUENCE:
-                            if (IsSequenceData(window))
-                            {
-                                sequenceWindows++;
-                            }
-                            combinedWindows++;
-                            state = State.CHECK_ALPHA_WHITE;
-                            break;
-
-                        case State.CHECK_ALPHA_WHITE:
-                            alphaWhite = ComputePercentAlphaAndWhite(window);
-                            if (alphaWhite > 0.90) { classification = "Natural"; state =
- State.CLASSIFY_NATURAL; naturalWindows++; break; }
-                            if (alphaWhite < 10) { state = State.CHECK_ENTROPY; break; }
-                            state = State.CHECK_ENTROPY;
-                            break;
-
-                        case State.CHECK_ENTROPY:
-                            entropy = ComputeEntropy(window);
-                            if (entropy > 7.5) { classification = "Random/Encrypted"; state =
- State.CLASSIFY_RANDOM; randomWindows++; break; }
-                            if (entropy < 6.5) { classification = "Natural"; state =
- State.CLASSIFY_NATURAL; naturalWindows++; break; }
-                            state = State.CHECK_RLE;
-                            break;
-
-                        case State.CHECK_RLE:
-                            rleRatio = ComputeRLECompressionRatio(window);
-                            if (rleRatio <= 0.5) { classification = "Natural"; state =
- State.CLASSIFY_NATURAL; naturalWindows++; break; }
-                            state = State.FULL_ANALYSIS;
-                            break;
-
-                        case State.FULL_ANALYSIS:
-                            periodicity = ComputePeriodicity(window);
-                            uniqueness = ComputeUniqueness(window);
-                            byteDeviation = ComputeByteDeviation(window);
-                            slidingWindow = ComputeSlidingWindowSimilarity(window);
-                            classification = "Other";
-                            state = State.CLASSIFY_OTHER;
-                            break;
-
-                        case State.CLASSIFY_NATURAL:
-                        case State.CLASSIFY_RANDOM:
-                        case State.CLASSIFY_OTHER:
-                            done = true;
-                            break;
-                    }
-                }
-
-                // ✅ Always store results for the processed window before moving to the next one
-                windowResults[start] =
- (entropy, periodicity, uniqueness, byteDeviation, slidingWindow, rleRatio, alphaWhite);
-            }
-
-            double avgEntropy = windowResults.Values.Average(v => v.Item1);
-            double avgPeriodicity = windowResults.Values.Average(v => v.Item2);
-            double avgUniqueness = windowResults.Values.Average(v => v.Item3);
-            double avgByteDeviation = windowResults.Values.Average(v => v.Item4);
-            double avgSlidingWindow = windowResults.Values.Average(v => v.Item5);
-
-            // === Combined Classification Rules (Refined) ===
-
-            // 1. Calculate weighted scores (as before, but no combinedScore yet).
-            double sequenceScore = sequenceWindows * 3.0;  // Sequence gets highest weight
-            double randomScore = randomWindows * 1.0;
-            double naturalScore = naturalWindows * 2.0;   // Natural is in the middle
-
-            // 2. Determine the dominant classification (if any).
-            string dominantClassification = "Other"; // Default
-            double dominantScore = 0.0;
-
-            if (sequenceScore >= randomScore && sequenceScore >= naturalScore && sequenceScore > 0)
-            {
-                dominantClassification = "Sequence";
-                dominantScore = sequenceScore;
-            }
-            else if (naturalScore >= randomScore && naturalScore > 0)
-            {
-                dominantClassification = "Natural";
-                dominantScore = naturalScore;
-            }
-            else if (randomScore > 0)
-            {
-                dominantClassification = "Random/Encrypted";
-                dominantScore = randomScore;
-            }
-
-            // Calculate totalWindows outside the call to IsCombinedData
-            int totalWindows = sequenceWindows + randomWindows + naturalWindows;
-
-            // 3. Check for Combined Data.  Pass totalWindows!
-            if (IsCombinedData(sequenceWindows, randomWindows, naturalWindows, combinedWindows, totalWindows, sequenceScore, randomScore, naturalScore, avgEntropy))
-            {
-                return ("Combined", avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow, windowResults);
-            }
-
-            //var (classification, _, _) = Score(avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow);
-
-            // 4. If not combined, return the dominant classification (or "Other" if none).
-            return (dominantClassification, avgEntropy, avgUniqueness, avgByteDeviation, avgPeriodicity, avgSlidingWindow, windowResults);
-
-        }
-
-        // === Step 1: Known File Type Check (Instant Classification) ===
-        static string KnownFileType(byte[] data)
-        {
-            if (data.Length < 4) return "Unknown";
-
-            // PDF (Header: "%PDF-")
-            if (data[0] == 0x25 && data[1] == 0x50 && data[2] == 0x44 && data[3] == 0x46)
-                return "PDF";
-
-            // ZIP (Header: "PK\x03\x04")
-            if (data[0] == 0x50 && data[1] == 0x4B && data[2] == 0x03 && data[3] == 0x04)
-                return "ZIP";
-
-            // EXE/DLL (MZ header)
-            if (data[0] == 0x4D && data[1] == 0x5A)
-                return "EXE";
-
-            // HTML (common start: "<!DO" or "<htm")
-            if (data[0] == 0x3C && data[1] == 0x21 && data[2] == 0x44 && data[3] == 0x4F)
-                return "HTML";
-            if (data[0] == 0x3C && data[1] == 0x68 && data[2] == 0x74 && data[3] == 0x6D)
-                return "HTML";
-
-            // JPG (JPEG SOI - Start of Image)
-            if (data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
-                return "JPG";  // ✅ Return specific file type
-
-            // PNG (Header: "\x89PNG\r\n\x1A\n")
-            if (data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47)
-                return "PNG";  // ✅ Return specific file type
-
-            // MKV (Matroska Video File)
-            if (data[0] == 0x1A && data[1] == 0x45 && data[2] == 0xDF && data[3] == 0xA3)
-                return "MKV";
-
-            // WAV (Waveform Audio File Format)
-            if (data.Length >= 12 &&
-                data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&  // "RIFF"
-                data[8] == 0x57 && data[9] == 0x41 && data[10] == 0x56 && data[11] == 0x45)  // "WAVE"
-                return "WAV";
-
-            // MSI (Microsoft Installer - PE format with MZ Header)
-            if (data[0] == 0xD0 && data[1] == 0xCF && data[2] == 0x11 && data[3] == 0xE0)
-                return "MSI";
-
-            return "Unknown";
-        }
-        private static bool IsCombinedData(int sequenceWindows, int randomWindows, int naturalWindows, int combinedWindows, int totalWindows, double sequenceScore, double randomScore, double naturalScore, double avgEntropy)
-        {
-            // 1. Require a minimum proportion of "combinable" windows.
-            // 🔹 Adaptive threshold for Combined classification
-            double adaptiveCombinedThreshold =
- (avgEntropy > 7.5) ? 0.55 : 0.40; // Stricter for high entropy, looser for low
-            if (combinedWindows < totalWindows * adaptiveCombinedThreshold && totalWindows > 0)
-            {
-                return false;
-            }
-
-            const double sequenceConfidenceFloor = 5.0; // Minimum required strength for Sequence to dominate
-            const double sequenceDominanceMargin = 0.2; // Adaptive margin
-
-            if (sequenceScore > sequenceConfidenceFloor &&
-                sequenceScore > randomScore + naturalScore + (randomScore + naturalScore) * sequenceDominanceMargin)
-            {
-                return false; // Sequence truly dominates
-            }
-
-            // 3. Check for dominance of other types (using counts).
-            const double dominanceThreshold = 0.8;
-            if (naturalWindows > totalWindows * dominanceThreshold) return false;
-            if (randomWindows > totalWindows * dominanceThreshold) return false;
-
-            // 4. Require at least two types to be *present* in significant amounts.
-            int numSignificantTypes = 0;
-            const double significantTypeThreshold = 0.1;
-            int relevantTotal = (combinedWindows > 0) ? combinedWindows : totalWindows;
-
-            if (sequenceWindows >= totalWindows * significantTypeThreshold) numSignificantTypes++;
-            if (naturalWindows >= relevantTotal * significantTypeThreshold) numSignificantTypes++;
-            if (randomWindows >= relevantTotal * significantTypeThreshold) numSignificantTypes++;
-
-            if (numSignificantTypes < 2)
-            {
-                return false;
-            }
-
-            return true; // Meets the criteria for combined data
-        }
-        #endregion AnalyzeDataMSM
-    }
-    #endregion InputProfiler
-#endif
 public class StateManager
 {
     private static readonly Stack<KeyValuePair<int, int>> _transformRoundStack = new();
@@ -1398,7 +762,7 @@ public class StateManager
     {
         CheckStackOverflow(_globalStateStack);
         foreach (var propInfo in typeof(GlobalsInstance).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                     .Where(p => p.GetCustomAttribute<Handlers.GlobalSettingAttribute>() != null))
+                     .Where(p => p.GetCustomAttribute<GlobalSettingAttribute>() != null))
         {
             var currentValue = propInfo.GetValue(_localEnv.Globals)!;
             _globalStateStack.Push(new KeyValuePair<string, object?>(propInfo.Name, currentValue));
@@ -1450,13 +814,13 @@ public class StateManager
     {
         CheckStackOverflow(_globalRoundStack); // ✅ Prevent overflow
 
-        var propInfo = typeof(CryptoLibOptions).GetProperty(GlobalRoundsSetting.Split('.')[1]);
+        var propInfo = typeof(GlobalsInstance).GetProperty(GlobalRoundsSetting.Split('.')[1]);
         if (propInfo == null)
             throw new InvalidOperationException($"Property '{GlobalRoundsSetting}' not found.");
 
-        var currentRounds = (int)propInfo.GetValue(_cryptoLib.Options)!;
+        var currentRounds = (int)propInfo.GetValue(_localEnv.Globals)!;
         _globalRoundStack.Push(currentRounds); // ✅ Save current value
-        propInfo.SetValue(_cryptoLib.Options, new_value); // ✅ Update to new value
+        propInfo.SetValue(_localEnv.Globals, new_value); // ✅ Update to new value
     }
 
     /// <summary>
@@ -1475,12 +839,12 @@ public class StateManager
         if (_globalRoundStack.Count == 0)
             throw new InvalidOperationException("No saved global round states to restore.");
 
-        var propInfo = typeof(CryptoLibOptions).GetProperty(GlobalRoundsSetting.Split('.')[1]);
+        var propInfo = typeof(GlobalsInstance).GetProperty(GlobalRoundsSetting.Split('.')[1]);
         if (propInfo == null)
             throw new InvalidOperationException($"Property '{GlobalRoundsSetting}' not found.");
 
         var previousRounds = _globalRoundStack.Pop();
-        propInfo.SetValue(_cryptoLib.Options, previousRounds); // ✅ Restore previous value
+        propInfo.SetValue(_localEnv.Globals, previousRounds); // ✅ Restore previous value
     }
 
     /// <summary>
@@ -1567,30 +931,30 @@ public class StateManager
     /// </summary>
     public void PushAllTransformRounds()
     {
-        lock (_stackLock)
-        {
-            var (caller, fullCallerInfo) = GetCallerInfo(_context, 1);
+        //lock (_stackLock)
+        //{
+        //    var (caller, fullCallerInfo) = GetCallerInfo(_context, 1);
 
-            _transformPushTracking.Add((caller, fullCallerInfo, Environment.StackTrace));
+        //    _transformPushTracking.Add((caller, fullCallerInfo, Environment.StackTrace));
 
-            LogStatus($"PUSH - Caller: {fullCallerInfo}, Stack Depth BEFORE: {_transformRoundStack.Count}");
+        //    LogStatus($"PUSH - Caller: {fullCallerInfo}, Stack Depth BEFORE: {_transformRoundStack.Count}");
 
-            if (_transformRoundStack.Count % _transformCount != 0)
-                HandleError(
-                    $"Stack imbalance detected BEFORE push. Expected a multiple of {_transformCount}, but found {_transformRoundStack.Count}.");
+        //    if (_transformRoundStack.Count % _transformCount != 0)
+        //        HandleError(
+        //            $"Stack imbalance detected BEFORE push. Expected a multiple of {_transformCount}, but found {_transformRoundStack.Count}.");
 
-            // ✅ Normal stack push operation
-            _pushAllTransformRounds();
+        //    // ✅ Normal stack push operation
+        //    _pushAllTransformRounds();
 
-            LogStatus($"PUSH - Stack Depth AFTER: {_transformRoundStack.Count}");
-        }
+        //    LogStatus($"PUSH - Stack Depth AFTER: {_transformRoundStack.Count}");
+        //}
     }
 
     private void _pushAllTransformRounds()
     {
-        CheckStackOverflow(_transformRoundStack); // ✅ Prevent overflow
-        foreach (var transform in _cryptoLib.TransformRegistry.Values)
-            _transformRoundStack.Push(new KeyValuePair<int, int>(transform.Id, transform.Rounds));
+        //CheckStackOverflow(_transformRoundStack); // ✅ Prevent overflow
+        //foreach (var transform in _cryptoLib.TransformRegistry.Values)
+        //    _transformRoundStack.Push(new KeyValuePair<int, int>(transform.Id, transform.Rounds));
     }
 
     /// <summary>
@@ -1598,48 +962,48 @@ public class StateManager
     /// </summary>
     public void PopAllTransformRounds()
     {
-        lock (_stackLock)
-        {
-            var (caller, fullCallerInfo) = GetCallerInfo(_context, 1);
+        //lock (_stackLock)
+        //{
+        //    var (caller, fullCallerInfo) = GetCallerInfo(_context, 1);
 
-            LogStatus($"POP - Caller: {fullCallerInfo}, Stack Depth BEFORE: {_transformRoundStack.Count}");
+        //    LogStatus($"POP - Caller: {fullCallerInfo}, Stack Depth BEFORE: {_transformRoundStack.Count}");
 
-            var available = _transformRoundStack.Count;
-            var required = _transformCount;
+        //    var available = _transformRoundStack.Count;
+        //    var required = _transformCount;
 
-            if (available < required)
-                HandleError($"Pop attempted by {fullCallerInfo}: Required {required}, but only {available} available.");
+        //    if (available < required)
+        //        HandleError($"Pop attempted by {fullCallerInfo}: Required {required}, but only {available} available.");
 
-            if (_transformPushTracking.Count == 0)
-                HandleError($"Pop operation attempted by {fullCallerInfo}, but no pushes exist.");
+        //    if (_transformPushTracking.Count == 0)
+        //        HandleError($"Pop operation attempted by {fullCallerInfo}, but no pushes exist.");
 
-            var index = _transformPushTracking.FindLastIndex(entry => entry.caller == caller);
-            if (index != -1)
-                _transformPushTracking.RemoveAt(index); // ✅ Removes the most recent push by this caller
-            else
-                HandleError($"Pop operation attempted by {fullCallerInfo}, but no matching push found.");
+        //    var index = _transformPushTracking.FindLastIndex(entry => entry.caller == caller);
+        //    if (index != -1)
+        //        _transformPushTracking.RemoveAt(index); // ✅ Removes the most recent push by this caller
+        //    else
+        //        HandleError($"Pop operation attempted by {fullCallerInfo}, but no matching push found.");
 
-            // ✅ Normal stack pop operation
-            _popAllTransformRounds();
+        //    // ✅ Normal stack pop operation
+        //    _popAllTransformRounds();
 
-            LogStatus($"POP - Stack Depth AFTER: {_transformRoundStack.Count}");
-        }
+        //    LogStatus($"POP - Stack Depth AFTER: {_transformRoundStack.Count}");
+        //}
     }
 
     private void _popAllTransformRounds()
     {
-        var stackSize = _transformRoundStack.Count;
-        if (stackSize < _transformCount)
-            HandleError(
-                $"Stack is unbalanced: Expected {_transformCount} elements, but only {stackSize} remain. This suggests a mismatch between push and pop operations.");
+        //var stackSize = _transformRoundStack.Count;
+        //if (stackSize < _transformCount)
+        //    HandleError(
+        //        $"Stack is unbalanced: Expected {_transformCount} elements, but only {stackSize} remain. This suggests a mismatch between push and pop operations.");
 
-        for (var i = 0; i < _transformCount; i++)
-        {
-            var (savedId, savedRounds) = _transformRoundStack.Pop();
-            if (!_cryptoLib.TransformRegistry.TryGetValue(savedId, out var transform))
-                HandleError($"Transform ID {savedId} not found in registry during PopAllTransformRounds().");
-            transform!.Rounds = (byte)savedRounds;
-        }
+        //for (var i = 0; i < _transformCount; i++)
+        //{
+        //    var (savedId, savedRounds) = _transformRoundStack.Pop();
+        //    if (!_cryptoLib.TransformRegistry.TryGetValue(savedId, out var transform))
+        //        HandleError($"Transform ID {savedId} not found in registry during PopAllTransformRounds().");
+        //    transform!.Rounds = (byte)savedRounds;
+        //}
     }
 
     private void LogStatus(string message)
@@ -1671,7 +1035,7 @@ public class StateManager
     private static int GlobalStateFrameSize()
     {
         return typeof(GlobalsInstance).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Count(p => p.GetCustomAttribute<Handlers.GlobalSettingAttribute>() != null);
+            .Count(p => p.GetCustomAttribute<GlobalSettingAttribute>() != null);
     }
 
     private static (object caller, string fullCallerInfo) GetCallerInfo(object context, int framesUp = 1)
@@ -1714,47 +1078,121 @@ public enum InputType
     UserData      // not tracked by InputProfiler.GetInputProfile()
 }
 
+[AttributeUsage(AttributeTargets.Property)]
+public class GlobalSettingAttribute : Attribute
+{
+    /// <summary>
+    /// If true, this setting is only shown when debugging.
+    /// </summary>
+    public bool IsDebugOnly { get; set; } = false;
+
+    /// <summary>
+    /// If true, this setting is internal and will not appear in user-facing lists.
+    /// </summary>
+    public bool IsInternal { get; set; } = false; // ✅ Hides setting from UI but allows CLI access
+
+    /// <summary>
+    /// If true, this setting should not be persisted when saving configurations.
+    /// </summary>
+    public bool IsNoSave { get; set; } = false; // ✅ NEW: Excludes setting from being written to disk
+
+    /// <summary>
+    /// If this is a compound setting, this array defines its related properties.
+    /// </summary>
+    public string[]? RelatedProperties { get; }
+
+    /// <summary>
+    /// Standard constructor (for regular settings).
+    /// </summary>
+    public GlobalSettingAttribute()
+    {
+    }
+
+    /// <summary>
+    /// Constructor for compound settings.
+    /// </summary>
+    public GlobalSettingAttribute(params string[]? relatedProperties)
+    {
+        RelatedProperties = relatedProperties;
+    }
+
+    /// <summary>
+    /// Constructor for debug-only settings.
+    /// </summary>
+    public GlobalSettingAttribute(bool IsDebugOnly)
+    {
+        this.IsDebugOnly = IsDebugOnly;
+    }
+
+    /// <summary>
+    /// Constructor for internal settings.
+    /// </summary>
+    public GlobalSettingAttribute(bool IsDebugOnly, bool IsInternal)
+    {
+        this.IsDebugOnly = IsDebugOnly;
+        this.IsInternal = IsInternal;
+    }
+
+    /// <summary>
+    /// Constructor for no-save settings.
+    /// </summary>
+    public GlobalSettingAttribute(bool IsDebugOnly, bool IsInternal, bool IsNoSave)
+    {
+        this.IsDebugOnly = IsDebugOnly;
+        this.IsInternal = IsInternal;
+        this.IsNoSave = IsNoSave;
+    }
+}
+[AttributeUsage(AttributeTargets.Property, Inherited = false, AllowMultiple = false)]
+public sealed class DoNotCloneAttribute : Attribute
+{
+}
 // Updated Globals class to include the Mode setting
 public class GlobalsInstance
 {
     //  properties for global access
-    [Handlers.GlobalSetting] public int Rounds { get; set; } = 9;
-    [Handlers.GlobalSetting] public int MaxSequenceLen { get; set; } = 3;
-    [Handlers.GlobalSetting] public InputType InputType { get; set; } = InputType.Random;
-    [Handlers.GlobalSetting] public int PassCount { get; set; } = 0;
-    [Handlers.GlobalSetting] public int DesiredContenders { get; set; } = 1000;
-    [Handlers.GlobalSetting] public bool Quiet { get; set; } = true;
+    [GlobalSetting] public int Rounds { get; set; } = 9;
+    [GlobalSetting] public int MaxSequenceLen { get; set; } = 3;
+    [GlobalSetting] public InputType InputType { get; set; } = InputType.Random;
+    [GlobalSetting] public int PassCount { get; set; } = 0;
+    [GlobalSetting] public int DesiredContenders { get; set; } = 1000;
+    [GlobalSetting] public bool Quiet { get; set; } = true;
 
-    [Handlers.GlobalSetting]
+    [GlobalSetting]
     public int FlushThreshold { get; set; } =
         50000; // Number of items before flushing console output and registering contenders
 
-    [Handlers.GlobalSetting]
+    [GlobalSetting]
     public bool SqlCompact { get; set; } =
         false; // Compact true outputs SQL queries in CSV, otherwise, a line based format is used
 
-    // ✅ If UseMetricScoring == true:
-    // Applies traditional metric scoring: rescaled scores are weighted and logarithmically scaled.
-    // Metrics that exceed their thresholds are capped to avoid over-contributing.
-    // ✅ If UseMetricScoring == false (the new default):
-    // Uses weighted practical scoring: banded scores (Perfect, Pass, NearMiss, Fail) reflect cryptographic robustness more realistically.
-    // Prioritizes metrics based on importance, not raw scale, providing clearer separation of weak vs strong sequences.
-    [Handlers.GlobalSetting] public bool UseMetricScoring { get; set; } = false;
+    // ✅ ScoringModes.Metric:
+    // Traditional metric-based scoring:
+    // • Each metric is rescaled relative to its expected value and weighted.
+    // • A logarithmic scaling is applied to compress extreme values and balance the score distribution.
+    // • Thresholds are enforced to cap overperforming metrics, preventing score inflation from outliers.
+    //
+    // ✅ ScoringModes.Practical (default):
+    // Modern, banded scoring for cryptographic relevance:
+    // • Metrics are grouped into bands: Perfect, Pass, NearMiss, Fail — based on cryptographic robustness.
+    // • Bands are weighted to prioritize meaningful structural qualities over raw numeric scores.
+    // • Produces clearer separation between strong and weak sequences, better reflecting real-world security value.
+    [GlobalSetting] public ScoringModes ScoringMode { get; set; } = ScoringModes.Practical;
 
-    [Handlers.GlobalSetting] public OperationModes Mode { get; set; } = OperationModes.Cryptographic;
+    [GlobalSetting] public OperationModes Mode { get; set; } = OperationModes.Cryptographic;
 
     #region Batch Mode Processing
 
-    [Handlers.GlobalSetting(false, true, true)] // need to be able to set this through the commandline, don't save
+    [GlobalSetting(false, true, true)] // need to be able to set this through the commandline, don't save
     public bool CreateMungeFailDB { get; set; } = false;
 
-    [Handlers.GlobalSetting(false, true, true)] // need to be able to set this through the commandline, don't save
+    [GlobalSetting(false, true, true)] // need to be able to set this through the commandline, don't save
     public bool CreateBTRFailDB { get; set; } = true; // BTR is always in creation mode
 
-    [Handlers.GlobalSetting(false, true, true)] // need to be able to set this through the commandline, don't save
+    [GlobalSetting(false, true, true)] // need to be able to set this through the commandline, don't save
     public bool ExitJobComplete { get; set; } = false;
 
-    [Handlers.GlobalSetting(false, true, true)] // need to be able to set this through the commandline, don't save
+    [GlobalSetting(false, true, true)] // need to be able to set this through the commandline, don't save
     public bool LogMungeOutput { get; set; } = false;
 
     public bool BatchMode { get; set; } = false; // never saved, never shown
@@ -1763,17 +1201,21 @@ public class GlobalsInstance
 
     #endregion Batch Mode Processing
 
-    [Handlers.GlobalSetting(true)]
+    [GlobalSetting(true)]
     public ReportHelper.ReportFormat ReportFormat { get; set; } = ReportHelper.ReportFormat.SCR;
 
-    [Handlers.GlobalSetting(true)] public string ReportFilename { get; set; } = null!;
+    [GlobalSetting(true)] public string ReportFilename { get; set; } = null!;
 
-    [Handlers.GlobalSetting("ReportFormat", "ReportFilename")]
+    [GlobalSetting("ReportFormat", "ReportFilename")]
     public string Reporting { get; set; } = null!;
 
     private const string SettingsFile = "GlobalSettings.json";
 
     public const string Password = "sample-password";
+
+    // Input is regenerated when InputType is set via UpdateSetting,
+    // so cloning it is unnecessary and could cause stale data issues.
+    [DoNotClone]
     public byte[] Input { get; set; } = null!;
 
     // ================================================================
@@ -1809,36 +1251,21 @@ public class GlobalsInstance
         _localEnv = localEnv;
         _allowSaving = allowSaving;
     }
-#if true
-    public void Dupe(GlobalsInstance? source, CryptoLibOptions? options = null)
+
+    public void Dupe(GlobalsInstance? source)
     {
         if (source == null)
             throw new ArgumentNullException(nameof(source));
 
         var properties = typeof(GlobalsInstance).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.IsDefined(typeof(Handlers.GlobalSettingAttribute)));
+            .Where(p => p.CanRead && p.CanWrite && !p.IsDefined(typeof(DoNotCloneAttribute)));
 
         foreach (var property in properties)
         {
-            var attribute = property.GetCustomAttribute<Handlers.GlobalSettingAttribute>();
-
-            // 🚨 Skip settings that should NOT be copied over
-            //if (attribute?.IsNoSave == true || attribute?.IsInternal == true)
-            //    continue;
-
-            if (attribute == null)
-                continue; // ✅ Skip properties without GlobalSettingAttribute
-
             try
             {
                 var value = property.GetValue(source);
-
-                // ✅ If `options` is provided, prefer its values where applicable
-                if (options != null)
-                    if (property.Name == nameof(Rounds))
-                        value = options.Rounds;
-
-                UpdateSetting(property.Name, value); // ✅ Ensures side effects (trigger actions) are applied
+                UpdateSetting(property.Name, value); // ✅ Preserves trigger actions and consistency
             }
             catch (Exception ex)
             {
@@ -1847,35 +1274,6 @@ public class GlobalsInstance
         }
     }
 
-#else
-        public void Dupe(GlobalsInstance source)
-        {
-            if (source == null)
-                throw new ArgumentNullException(nameof(source));
-
-            var properties = typeof(GlobalsInstance).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.IsDefined(typeof(GlobalSettingAttribute)));
-
-            foreach (var property in properties)
-            {
-                var attribute = property.GetCustomAttribute<GlobalSettingAttribute>();
-
-                // 🚨 Skip settings that should NOT be copied over
-                //if (attribute?.IsNoSave == true || attribute?.IsInternal == true)
-                //    continue;
-
-                try
-                {
-                    object value = property.GetValue(source);
-                    UpdateSetting(property.Name, value); // ✅ Ensures side effects (trigger actions) are applied
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Warning: Failed to copy setting {property.Name}. Error: {ex.Message}");
-                }
-            }
-        }
-#endif
     // Load settings from file
     public void Load()
     {
@@ -1892,7 +1290,7 @@ public class GlobalsInstance
         if (settings != null)
         {
             var properties = typeof(GlobalsInstance).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.IsDefined(typeof(Handlers.GlobalSettingAttribute)))
+                .Where(p => p.IsDefined(typeof(GlobalSettingAttribute)))
                 .ToDictionary(p => p.Name, p => p, StringComparer.OrdinalIgnoreCase);
 
             foreach (var (key, jsonElement) in settings)
@@ -1903,7 +1301,7 @@ public class GlobalsInstance
                     continue;
                 }
 
-                var attribute = property.GetCustomAttribute<Handlers.GlobalSettingAttribute>();
+                var attribute = property.GetCustomAttribute<GlobalSettingAttribute>();
                 if (attribute?.IsNoSave == true)
                 {
                     Console.WriteLine($"Warning: Ignoring non-persistent setting '{key}' from settings file.");
@@ -1933,9 +1331,9 @@ public class GlobalsInstance
 
         // ✅ Final Pass: Ensure ALL valid GlobalSettings are explicitly set
         foreach (var property in typeof(GlobalsInstance).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                     .Where(p => p.IsDefined(typeof(Handlers.GlobalSettingAttribute))))
+                     .Where(p => p.IsDefined(typeof(GlobalSettingAttribute))))
         {
-            var attribute = property.GetCustomAttribute<Handlers.GlobalSettingAttribute>();
+            var attribute = property.GetCustomAttribute<GlobalSettingAttribute>();
 
             // 🚨 Skip settings that are Debug, NoSave, or Internal
             if (attribute?.IsDebugOnly == true || attribute?.IsNoSave == true || attribute?.IsInternal == true)
@@ -1957,14 +1355,14 @@ public class GlobalsInstance
         var settings = new Dictionary<string, object>();
 
         var properties = typeof(GlobalsInstance).GetProperties(BindingFlags.Instance | BindingFlags.Public)
-            .Where(p => p.IsDefined(typeof(Handlers.GlobalSettingAttribute)))
+            .Where(p => p.IsDefined(typeof(GlobalSettingAttribute)))
             .ToList();
 
         var compoundKeys = new HashSet<string>(); // ✅ Prevent duplicate compound settings
 
         foreach (var property in properties)
         {
-            var attribute = property.GetCustomAttribute<Handlers.GlobalSettingAttribute>();
+            var attribute = property.GetCustomAttribute<GlobalSettingAttribute>();
 
             if (attribute?.IsNoSave == true) continue; // 🔥 Skip saving `IsNoSave: true` settings
 
@@ -1996,25 +1394,22 @@ public class GlobalsInstance
     // Update a specific setting
     public void UpdateSetting(string key, object? value)
     {
-        //Console.WriteLine($"[DEBUG] Updating {key} with value: {value} ({value?.GetType().Name})");
-
-        if (_cryptoLib == null)
-            throw new InvalidOperationException(
-                $"Cannot update setting '{key}' because CryptoLib instance is required but was null.");
-
         var properties = typeof(GlobalsInstance).GetProperties(BindingFlags.Instance | BindingFlags.Public)
-            .Where(p => p.IsDefined(typeof(Handlers.GlobalSettingAttribute)))
+            .Where(p => p.CanWrite)
             .ToDictionary(p => p.Name, p => p, StringComparer.OrdinalIgnoreCase);
 
-        if (!properties.TryGetValue(key, out var property)) throw new ArgumentException($"Unknown key: {key}");
+        if (!properties.TryGetValue(key, out var property))
+            throw new ArgumentException($"Unknown key: {key}");
 
-        // 🔥 Ensure correct type conversion before setting
+        // 🚫 Check for [DoNotClone] and reject
+        if (property.IsDefined(typeof(DoNotCloneAttribute)))
+            throw new InvalidOperationException($"Setting '{key}' is marked [DoNotClone] and cannot be updated dynamically.");
+
+        // 🔄 Convert value into the expected type
         var sequenceHandler = new SequenceAttributesHandler(_localEnv);
         var convertedValue = sequenceHandler.ConvertValue(property.PropertyType, value);
 
-        //Console.WriteLine($"[DEBUG] Converted {key}: {convertedValue} ({convertedValue?.GetType().Name})");
-
-        property.SetValue(this, convertedValue); // ✅ Now `InputType` will be set as an enum instead of a string
+        property.SetValue(this, convertedValue);
 
         TriggerSpecialActions(key, convertedValue);
     }
@@ -2026,42 +1421,13 @@ public class GlobalsInstance
         {
             case "inputtype":
                 Input = GenerateTestInput(_localEnv);
-                // 🎯 Dynamically set GlobalRounds by re-invoking UpdateSetting with "rounds"
-                switch (_localEnv.Globals.InputType)
-                {
-                    case InputType.Combined:
-                        UpdateSetting("rounds", "6"); // verified 4/10/2025
-                        break;
-                    case InputType.Natural:
-                        UpdateSetting("rounds", "3"); // verified 4/10/2025
-                        break;
-                    case InputType.Random:
-                        UpdateSetting("rounds", "3"); // verified 4/10/2025
-                        break;
-                    case InputType.Sequence:
-                        UpdateSetting("rounds", "5"); // verified 4/10/2025
-                        break;
-                    case InputType.UserData:
-                        // ✅ For user data, do not override the GlobalRounds.
-                        // The user is responsible for setting the desired round count manually.
-                        break;
-                    default:
-                        throw new InvalidOperationException(
-                            $"Unknown InputType detected during adaptive rounds assignment: {_localEnv.Globals.InputType}");
-                }
-
                 break;
 
             case "mode":
                 if (value is OperationModes parsedMode)
-                //if (_cryptoLib.Options == null)
-                //{
-                //    throw new InvalidOperationException("CryptoLib.Options is null. Ensure it is properly initialized before setting Mode.");
-                //}
-                //else
                 {
                     _localEnv.Globals.Mode = parsedMode;
-                    MetricInfoHelper.AdjustWeights(_localEnv, parsedMode); // Adjust weights if necessary
+                    _localEnv.CryptoAnalysis.ApplyWeights(parsedMode); // Adjust weights if necessary
                 }
                 else
                 {
@@ -2078,7 +1444,9 @@ public class GlobalsInstance
                             "CryptoLib.Options is null. Ensure it is properly initialized before setting Rounds.");
 
                     _localEnv.Globals.Rounds = newRounds;
-                    _cryptoLib.Options.Rounds = newRounds;
+                    // the crypto lib no longer knows anything about 'static' global rounds. All global rounds are now passed
+                    //  to crypto lib via a profile
+                    //_cryptoLib.Options.Rounds = newRounds;
                 }
                 else
                 {
@@ -2089,13 +1457,46 @@ public class GlobalsInstance
         }
     }
 
+    /// <summary>
+    /// Returns the recommended GlobalRounds value based on the current InputType.
+    ///
+    /// While the Workbench allows users to adjust InputType and Rounds independently for flexible experimentation,
+    /// tuning and discovery tools like Munge and BTR explicitly assign a GlobalRounds value tied to the specific
+    /// InputType being processed. This ensures consistent, deterministic results during automated optimization,
+    /// scoring, and comparison runs.
+    ///
+    /// ⚠️ Note: For InputType.UserData, no override is applied — the round count must be set manually by the user.
+    /// </summary>
+    public int GlobalRoundsForType()
+    {
+        switch (_localEnv.Globals.InputType)
+        {
+            case InputType.Combined:
+                return 6; // verified 4/10/2025
+            case InputType.Natural:
+                return 3; // verified 4/10/2025
+            case InputType.Random:
+                return 3; // verified 4/10/2025
+            case InputType.Sequence:
+                return 5; // verified 4/10/2025
+            case InputType.UserData:
+                // ✅ For user data, do not override the GlobalRounds.
+                // The user is responsible for setting the desired round count manually.
+                return _localEnv.Globals.Rounds;
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown InputType detected during adaptive rounds assignment: {_localEnv.Globals.InputType}");
+        }
+    }
     // Fallback logic to get default value from CryptoLib
     private object GetDefaultFromCryptoLib(string key)
     {
         return (key switch
         {
-            "TRounds" => _cryptoLib!.Options.Rounds,
-            "SessionIV" => _cryptoLib!.Options.SessionIv,
+            // the crypto lib no longer knows anything about 'static' global rounds. All global rounds are now passed
+            //  to crypto lib via a profile
+            //"TRounds" => _cryptoLib!.Options.Rounds,
+            "RequiredSalt" => _cryptoLib!.Options.Salt,
             _ => GetDefaultForUnknownSetting(key)
         })!;
     }
@@ -2150,17 +1551,23 @@ public class ExecutionEnvironment
     /// </summary>
     /// <param name="options">Configuration options for the cryptographic library.</param>
     /// <param name="allowSaving">Indicates whether this environment is allowed to save settings.</param>
-    public ExecutionEnvironment(CryptoLibOptions? options, bool allowSaving = false)
+    public ExecutionEnvironment(string password, CryptoLibOptions options, bool allowSaving = false)
     {
         // 🛑 Clone options FIRST to ensure nothing is shared
-        var clonedOptions = options?.Dupe();
+        var clonedOptions = options.Dupe();
 
-        Crypto = new CryptoLib(GlobalsInstance.Password, clonedOptions);
+        Crypto = new CryptoLib(password, clonedOptions!);
 
         Globals = new GlobalsInstance(this, allowSaving);
 
         // ✅ Ensure settings are fully initialized (allocates input, loads weight tables, syncs globals & crypto)
         InitDefaults(Globals, Crypto);
+    }
+
+    public ExecutionEnvironment(CryptoLibOptions options, bool allowSaving = false)
+    : this(GlobalsInstance.Password, options, allowSaving)
+    {
+
     }
 
     /// <summary>
@@ -2176,10 +1583,33 @@ public class ExecutionEnvironment
         : this(existingEnv.Crypto.Options, false)
     {
         // ✅ Clone all global settings from the existing environment
-        Globals.Dupe(existingEnv.Globals, existingEnv.Crypto.Options);
+        Globals.Dupe(existingEnv.Globals);
 
         // ✅ Apply any provided setting overrides after duplication
         if (settings != null) ApplySettings(settings);
+    }
+
+    /// <summary>
+    /// ✅ Clone constructor: Creates a sandboxed <see cref="ExecutionEnvironment"/> based on an existing one,
+    /// while preserving password isolation.
+    /// 
+    /// - Uses the provided <paramref name="password"/> instead of relying on any global password.
+    /// - Clones all <see cref="GlobalsInstance"/> settings from the original environment.
+    /// - Allows optional overrides to apply after duplication (e.g., rounds, mode, input type).
+    /// 
+    /// This constructor is ideal for spawning evaluation sandboxes or subcontexts without mutating
+    /// the original environment or polluting global password state.
+    /// </summary>
+    /// <param name="existingEnv">The source environment to clone from.</param>
+    /// <param name="password">The password to use for the new environment’s CryptoLib instance.</param>
+    /// <param name="settings">Optional setting overrides to apply post-clone.</param>
+    public ExecutionEnvironment(ExecutionEnvironment existingEnv, string password, Dictionary<string, string>? settings = null)
+        : this(password, existingEnv.Crypto.Options, false)
+    {
+        Globals.Dupe(existingEnv.Globals);
+
+        if (settings != null)
+            ApplySettings(settings);
     }
 
     /// <summary>
@@ -2193,7 +1623,9 @@ public class ExecutionEnvironment
     private void InitDefaults(GlobalsInstance instance, CryptoLib cryptoLib)
     {
         instance.UpdateSetting("inputtype", instance.InputType); // ✅ Allocates input buffer
-        instance.UpdateSetting("rounds", cryptoLib!.Options.Rounds); // ✅ Syncs round count
+        // the crypto lib no longer knows anything about 'static' global rounds. All global rounds are now passed
+        //  to crypto lib via a profile
+        //instance.UpdateSetting("rounds", cryptoLib!.Options.Rounds); // ✅ Syncs round count
     }
 
     private void ApplySettings(Dictionary<string, string> settings)
@@ -2224,13 +1656,12 @@ public class ExecutionEnvironment
                                  ?? throw new FormatException(
                                      $"❌ ERROR: Unrecognized Mode '{value}' in settings file!");
             }
-            else if (key == "UseMetricScoring")
+            else if (key == "ScoringMode")
             {
-                if (value != "T" && value != "F")
-                    throw new FormatException(
-                        $"❌ ERROR: Invalid UseMetricScoring value in settings file! (Expected 'T' or 'F', got '{value}')");
-
-                processedValue = value == "T" ? "true" : "false"; // ✅ Convert to expected boolean string
+                processedValue = Enum.GetNames(typeof(ScoringModes))
+                                     .FirstOrDefault(name => name.StartsWith(value, StringComparison.OrdinalIgnoreCase))
+                                 ?? throw new FormatException(
+                                     $"❌ ERROR: Unrecognized Mode '{value}' in settings file!");
             }
 
             // ✅ Apply setting ONLY if it belongs in Globals
@@ -2252,6 +1683,34 @@ public class ExecutionEnvironment
                    BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) != null;
     }
 
+}
+public class EnvPool
+{
+    private readonly ConcurrentBag<ExecutionEnvironment> _pool = new();
+    private readonly ExecutionEnvironment _template;
+
+    public EnvPool(ExecutionEnvironment template)
+    {
+        _template = template;
+    }
+
+    public ExecutionEnvironment Rent()
+    {
+        if (_pool.TryTake(out var env))
+        {
+            //env.Reset(); // optional: pass _template if needed
+            return env;
+        }
+
+        return new ExecutionEnvironment(_template);
+    }
+
+    public void Return(ExecutionEnvironment env)
+    {
+        _pool.Add(env);
+    }
+
+    public int Count => _pool.Count;
 }
 
 #region Sequence Attributes Handler
@@ -2287,29 +1746,7 @@ public class SequenceAttributesHandler
             _localEnv.Globals.UpdateSetting(key, convertedValue);
         }
     }
-#if false
-        private object ConvertValue(string key, object value)
-        {
-            var properties = typeof(GlobalsInstance).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.IsDefined(typeof(GlobalSettingAttribute)))
-                .ToDictionary(p => p.Name, p => p.PropertyType, StringComparer.OrdinalIgnoreCase);
 
-            if (!properties.TryGetValue(key, out Type expectedType))
-                throw new ArgumentException($"Unknown global setting: {key}");
-
-            if (value.GetType() == expectedType)
-                return value; // ✅ Already the correct type
-
-            if (expectedType.IsEnum && value is string stringValue)
-            {
-                if (Enum.TryParse(expectedType, stringValue, true, out object result))
-                    return result;
-            }
-
-            return Convert.ChangeType(value, expectedType); // ✅ Safely convert types (e.g., string to int)
-        }
-#endif
-#if true
     public object? ConvertValue(Type targetType, object? value)
     {
         if (value == null)
@@ -2347,29 +1784,6 @@ public class SequenceAttributesHandler
         return Convert.ChangeType(value, targetType);
     }
 
-#else
-        public object ConvertValue(Type targetType, object value)
-        {
-            if (value == null)
-            {
-                if (targetType.IsValueType)
-                    return Activator.CreateInstance(targetType)!; // Default for value types
-                return null!; // Default for reference types
-            }
-
-            if (value.GetType() == targetType)
-                return value; // ✅ Already the correct type
-
-            if (targetType.IsEnum && value is string stringValue)
-            {
-                if (Enum.TryParse(targetType, stringValue, true, out object result))
-                    return result;
-                throw new ArgumentException($"Invalid enum value '{stringValue}' for type {targetType.Name}");
-            }
-
-            return Convert.ChangeType(value, targetType);
-        }
-#endif
     public object? ConvertValue(Type targetType, string value)
     {
         if (targetType.IsEnum)
@@ -2399,7 +1813,7 @@ public class SequenceAttributesHandler
 }
 
 #endregion Sequence Attributes Handler
-#if true
+
 public static class TestInputGenerator
 {
     private static readonly object _initLock = new();
@@ -2526,302 +1940,108 @@ public static class TestInputGenerator
     }
 }
 
-#else
-public static class TestInputGenerator
-{
-    private static readonly object _initLock = new();
-    private static bool _isInitialized = false;
-
-    private static byte[] _randomData = Array.Empty<byte>();
-    private static byte[] _naturalData = Array.Empty<byte>();
-    private static byte[] _sequenceData = Array.Empty<byte>();
-    private static byte[] _combinedData = Array.Empty<byte>();
-
-    public static void InitializeInputData()
-    {
-        lock (_initLock)
-        {
-            if (_isInitialized)
-                return;
-
-            var randoms_filename = "randoms.bin";
-            var natural_filename = "Frankenstein.bin";
-            var natural_source = "Frankenstein.txt";
-
-            // 🚀 Load or generate Random Data
-            if (!File.Exists(randoms_filename))
-            {
-                Console.WriteLine($"[WARN] {randoms_filename} not found. Generating new random data...");
-                _randomData = new byte[4096];
-                using (var rng = RandomNumberGenerator.Create())
-                {
-                    rng.GetBytes(_randomData);
-                }
-
-                File.WriteAllBytes(randoms_filename, _randomData);
-            }
-            else
-            {
-                _randomData = File.ReadAllBytes(randoms_filename);
-            }
-
-            ValidateBuffer(_randomData, 4096, randoms_filename);
-
-            // 🚀 Load or create Natural Data
-            if (!File.Exists(natural_filename))
-            {
-                if (!File.Exists(natural_source))
-                    throw new FileNotFoundException(
-                        $"❌ CRITICAL ERROR: {natural_source} not found. Cannot create {natural_filename}.");
-
-                var textContent = File.ReadAllText(natural_source);
-                _naturalData = Encoding.UTF8.GetBytes(textContent);
-                File.WriteAllBytes(natural_filename, _naturalData);
-            }
-            else
-            {
-                _naturalData = File.ReadAllBytes(natural_filename);
-            }
-
-            ValidateBuffer(_naturalData, 4096, natural_filename);
-
-            // 🚀 Generate Sequence Data
-            _sequenceData = Enumerable.Range(0, 4096).Select(i => (byte)i).ToArray();
-            ValidateBuffer(_sequenceData, 4096, "Sequence Data");
-
-            // 🚀 Generate Combined Data using equal thirds approach
-            var sliceSize = 4096 / 3;
-            var natural = _naturalData.Take(sliceSize);
-            var sequence = _sequenceData.Take(sliceSize);
-            var random = _randomData.Take(sliceSize);
-
-            _combinedData = natural.Concat(sequence).Concat(random).ToArray();
-
-            if (_combinedData.Length < 4096)
-                Array.Resize(ref _combinedData, 4096);
-            else if (_combinedData.Length > 4096) _combinedData = _combinedData.Take(4096).ToArray();
-
-            _isInitialized = true;
-        }
-    }
-
-    public static byte[] GenerateTestInput(int size, InputType type = InputType.Natural)
-    {
-        if (!_isInitialized)
-            throw new InvalidOperationException(
-                "❌ CRITICAL ERROR: Test input data has not been initialized. Call InitializeInputData() first.");
-
-        var sourceData = type switch
-        {
-            InputType.Random => _randomData,
-            InputType.Natural => _naturalData,
-            InputType.Sequence => _sequenceData,
-            InputType.Combined => _combinedData,
-            _ => throw new ArgumentException($"❌ CRITICAL ERROR: Invalid input type specified: {type}")
-        };
-
-        ValidateBuffer(sourceData, size, $"Requested {type} Data");
-
-        return sourceData.Take(size).ToArray();
-    }
-
-    public static byte[] GenerateTestInput(ExecutionEnvironment localEnv)
-    {
-        return GenerateTestInput(4096, localEnv.Globals.InputType);
-    }
-
-    private static void ValidateBuffer(byte[] buffer, int expectedSize, string sourceName)
-    {
-        if (buffer == null || buffer.Length == 0)
-            throw new InvalidOperationException($"❌ CRITICAL ERROR: {sourceName} buffer is null or empty.");
-
-        if (buffer.Length < expectedSize)
-            throw new ArgumentException(
-                $"❌ CRITICAL ERROR: Requested size ({expectedSize}) exceeds available {sourceName} data ({buffer.Length}).");
-    }
-}
-#endif
-public static class MetricInfoHelper
-{
-    private static readonly Dictionary<OperationModes, Dictionary<string, double>> modeWeights = new()
-    {
-        {
-            OperationModes.Cryptographic, new Dictionary<string, double>
-            {
-                { "Entropy", 0.3 },
-                { "BitVariance", 0.2 },
-                { "SlidingWindow", 0.1 }, // De-emphasized
-                { "FrequencyDistribution", 0.1 }, // De-emphasized
-                { "PeriodicityCheck", 0.1 },
-                { "MangosCorrelation", 0.3 },
-                { "PositionalMapping", 0.3 },
-                { "AvalancheScore", 0.4 }, // Emphasized
-                { "KeyDependency", 0.3 } // Important for cryptographic robustness
-            }
-        },
-        {
-            OperationModes.Cryptographic_New, new Dictionary<string, double>
-            {
-                { "AvalancheScore", 0.1860 },
-                { "Entropy", 0.1395 },
-                { "MangosCorrelation", 0.1395 },
-                { "PositionalMapping", 0.1395 },
-                { "KeyDependency", 0.1395 },
-                { "BitVariance", 0.1163 },
-                { "SlidingWindow", 0.0465 },
-                { "FrequencyDistribution", 0.0465 },
-                { "PeriodicityCheck", 0.0465 }
-            }
-        },
-        {
-            OperationModes.Exploratory, new Dictionary<string, double>
-            {
-                { "Entropy", 0.2 },
-                { "BitVariance", 0.2 },
-                { "SlidingWindow", 0.3 }, // Emphasized
-                { "FrequencyDistribution", 0.3 }, // Emphasized
-                { "PeriodicityCheck", 0.1 },
-                { "MangosCorrelation", 0.2 },
-                { "PositionalMapping", 0.2 },
-                { "AvalancheScore", 0.2 }, // De-emphasized
-                { "KeyDependency", 0.2 } // Secondary in exploratory analysis
-            }
-        },
-        {
-            OperationModes.Exploratory_New, new Dictionary<string, double>
-            {
-                { "Entropy", 0.000 },
-                { "BitVariance", 0.000 },
-                { "SlidingWindow", 0.000 },
-                { "FrequencyDistribution", 0.000 },
-                { "PeriodicityCheck", 0.000 },
-                { "MangosCorrelation", 0.000 },
-                { "PositionalMapping", 0.000 },
-                { "AvalancheScore", 0.000 },
-                { "KeyDependency", 0.000 }
-            }
-        },
-        {
-            OperationModes.Flattening, new Dictionary<string, double>
-            {
-                { "Entropy", 1.5 }, // 🚀 More weight to ensure full entropy neutralization.
-                { "BitVariance", 1.0 }, // 🔥 Maintain uniform bit variance.
-                { "SlidingWindow", 1.5 }, // 🔥 Ensure local patterns do not persist.
-                { "FrequencyDistribution", 1.0 }, // ✅ Keep bytes evenly distributed.
-                { "PeriodicityCheck", 1.0 }, // ✅ Ensure no periodic patterns remain.
-                { "MangosCorrelation", 0.001 },
-                { "PositionalMapping", 0.001 },
-                { "AvalancheScore", 0.001 },
-                { "KeyDependency", 0.001 }
-            }
-        },
-        {
-            OperationModes.None, new Dictionary<string, double>
-            {
-                { "Entropy", 1.0 },
-                { "BitVariance", 1.0 },
-                { "SlidingWindow", 1.0 },
-                { "FrequencyDistribution", 1.0 },
-                { "PeriodicityCheck", 1.0 },
-                { "MangosCorrelation", 1.0 },
-                { "PositionalMapping", 1.0 },
-                { "AvalancheScore", 1.0 },
-                { "KeyDependency", 1.0 }
-            }
-        }
-    };
-
-    public static bool TryGetWeights(OperationModes mode, out Dictionary<string, double> weights)
-    {
-        return modeWeights.TryGetValue(mode, out weights!);
-    }
-
-    public static void AdjustWeights(ExecutionEnvironment localEnv, OperationModes mode)
-    {
-        // Initialize a dictionary to accumulate weights
-        var combinedWeights = new Dictionary<string, double>();
-
-        foreach (var singleMode in Enum.GetValues<OperationModes>())
-            // Check if the mode flag is set
-            if (mode.HasFlag(singleMode) && modeWeights.TryGetValue(singleMode, out var weights))
-                foreach (var (metric, weight) in weights)
-                    if (combinedWeights.ContainsKey(metric))
-                        combinedWeights[metric] = Math.Max(combinedWeights[metric], weight);
-                    else
-                        combinedWeights[metric] = weight;
-
-        // Apply combined weights to the MetricsRegistry
-        foreach (var key in localEnv.CryptoAnalysis.MetricsRegistry.Keys)
-            if (combinedWeights.TryGetValue(key, out var weight))
-                localEnv.CryptoAnalysis.MetricsRegistry[key].Weight = weight;
-            else
-                Console.WriteLine($"Warning: No default weight specified for metric {key} in mode {mode}.");
-    }
-
-    //public static void NormalizeWeights()
-    //{
-    //    foreach (var key in MetricsRegistry.Keys)
-    //    {
-    //        MetricsRegistry[key].PushWeight(1.0); // Push the current weight and set to 1.0
-    //    }
-    //}
-
-    //public static void RestoreWeights()
-    //{
-    //    foreach (var key in MetricsRegistry.Keys)
-    //    {
-    //        MetricsRegistry[key].PopWeight(); // Restore the previous weight
-    //    }
-    //}
-}
-
 public static class UtilityHelpers
 {
-    public static object _debug_lock = new();
-
-    public static bool AreListsEquivalent(List<byte[]> list1, List<byte[]> list2)
+    public static readonly byte[] AesSalt =
     {
-        return list1.Count == list2.Count &&
-               !list1.Except(list2, new ByteArrayComparer()).Any() &&
-               !list2.Except(list1, new ByteArrayComparer()).Any();
-    }
+        0x06, 0x05, 0x77, 0x38,
+        0x64, 0x15, 0x5C, 0xD6,
+        0x36, 0x0E, 0x06, 0xA3,
+        0xE6, 0x24, 0x9E, 0x35
+    };
 
-    public static (bool success, string errorMessage) SetTransformRounds(
-        CryptoLib? cryptoLib,
-        List<(string name, int id, int tRounds)> parsedSequence) // 🚀 No GR needed
+    /// <summary>
+    /// Prompts the user to select a number within a given range.
+    /// Returns 0 if the user presses Escape or enters an invalid value.
+    /// </summary>
+    /// <summary>
+    /// Prompts the user to select a number between the given bounds.
+    /// Returns 0 if the user cancels or enters an invalid option.
+    /// </summary>
+    public static int SelectMenuOpt(byte from, byte to)
     {
-        if (parsedSequence.Count == 0) return (false, "No valid transforms provided.");
+        Console.Write($"\nEnter a number between {from} and {to} to select a profile, or press ESC to cancel: ");
 
-        foreach (var (name, id, tRounds) in parsedSequence) // 🚀 No GR here either
+        var inputBuffer = new StringBuilder();
+
+        while (true)
         {
-            if (!cryptoLib!.TransformRegistry.TryGetValue(id, out var transform))
-                return (false, $"Transform ID {id} not found in registry.");
+            var key = Console.ReadKey(intercept: true);
 
-            transform.Rounds = (byte)tRounds; // 🔹 Set per-transform rounds
+            if (key.Key == ConsoleKey.Escape)
+            {
+                Console.WriteLine("\n❌ Selection cancelled.");
+                return 0;
+            }
 
-            // 🔹 Set the **inverse transform** to the same TR value
-            if (cryptoLib!.TransformRegistry.TryGetValue(transform.InverseId, out var inverseTransform))
-                inverseTransform.Rounds = (byte)tRounds;
+            if (key.Key == ConsoleKey.Enter)
+            {
+                Console.WriteLine(); // Move to next line
+                if (int.TryParse(inputBuffer.ToString(), out int result) && result >= from && result <= to)
+                    return result;
+
+                Console.WriteLine($"❌ Invalid selection. Please enter a number between {from} and {to}.");
+                return 0;
+            }
+
+            if (char.IsDigit(key.KeyChar))
+            {
+                inputBuffer.Append(key.KeyChar);
+                Console.Write(key.KeyChar);
+            }
+            else if (key.Key == ConsoleKey.Backspace && inputBuffer.Length > 0)
+            {
+                inputBuffer.Length--;
+                Console.Write("\b \b");
+            }
+            else
+            {
+                Console.Beep();
+            }
         }
+    }
+    public static void AssertWeightsMatchExpectedMode(ExecutionEnvironment env)
+    {
+#if DEBUG
+        var mode = env.Globals.Mode;
 
-        return (true, ""); // ✅ Success, no errors
+        // ❌ Abort if no mode is set
+        if (mode == OperationModes.None)
+            throw new InvalidOperationException("Mode is not set. Cannot validate weight table.");
+
+        // ✅ Try to retrieve expected weights for the current mode
+        if (!env.CryptoAnalysis.TryGetWeights(mode, out var expectedWeights))
+            throw new InvalidOperationException($"No predefined weight table found for mode: {mode}.");
+
+        // ✅ Get actual weights from the MetricsRegistry
+        var actualWeights = env.CryptoAnalysis.MetricsRegistry
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Weight);
+
+        // 🔄 Compare actual vs expected (order-insensitive)
+        var matches = actualWeights.OrderBy(kvp => kvp.Key)
+            .SequenceEqual(expectedWeights.OrderBy(kvp => kvp.Key));
+
+        if (!matches)
+            throw new InvalidOperationException(
+                $"Active weight table does not match expected weights for mode: {mode}.");
+#endif
     }
 
-
-    public static List<string> GetMungeBody(ExecutionEnvironment localEnv)
+    public static List<string> GetMungeBody(ExecutionEnvironment localEnv, int? rounds = null)
     {
+        int resolvedRounds = rounds ?? localEnv.Globals.Rounds;
         var failDBColor = localEnv.Globals.CreateMungeFailDB ? "Red" : "Green"; // Red if MungeFailDB is enabled
 
         return new List<string>
         {
             $"<Green>[Timestamp] {DateTime.Now:MM/dd/yyyy hh:mm:ss tt}</Green>", // Provides a readable timestamp
             $"<Green>DataType: {localEnv.Globals.InputType}</Green>", // Input type (Combined, Random, etc.)
-            $"<Green>Rounds: {localEnv.Globals.Rounds}</Green>", // Global rounds for encryption
+            $"<Green>Rounds: {resolvedRounds}</Green>", // Global rounds for encryption
             $"<Green>Mode: {localEnv.Globals.Mode}</Green>", // Cryptographic or Exploratory mode
             $"<Green>PassCount: {localEnv.Globals.PassCount}</Green>", // Number of passes required for success
             $"<Green>MaxSequenceLen: {localEnv.Globals.MaxSequenceLen}</Green>", // Maximum sequence length allowed
             $"<Green>Munge Level: L{localEnv.Globals.MaxSequenceLen}</Green>", // Same as MaxSequenceLen, expressed as a level
-            $"<Green>Metric Scoring: {(localEnv.Globals.UseMetricScoring ? "True" : "False")}</Green>", // Whether metric scoring is enabled
+            $"<Green>Scoring Mode: {localEnv.Globals.ScoringMode}</Green>", // Current scoring strategy
             $"<Green>Database: {GetFailDBFilename(localEnv, "MungeFailDB,")}</Green>", // Name of the MungeFailDB file
             $"<{failDBColor}>Database Creation Mode: {(localEnv.Globals.CreateMungeFailDB ? "Enabled" : "Read-Only")}</{failDBColor}>", // MungeFailDB mode
             $"<Green>Commandline: {localEnv.Globals.Commandline ?? "<not set>"}</Green>" // Logs the command-line arguments
@@ -2877,14 +2097,14 @@ public static class UtilityHelpers
     /// - **M<Mode>** → Encryption mode:
     ///   - `'C'` = Cryptographic  
     ///   - `'E'` = Exploratory  
-    /// - **S<UseMetricScoring>** → Indicates if metric scoring was used:
-    ///   - `'T'` = True  
-    ///   - `'F'` = False  
+    /// - **S<ScoringMode>** → Indicates if Practical or Metric scoring was used:
+    ///   - `'P'` = Practical
+    ///   - `'M'` = Metric
     /// 
     /// **Example Filenames:**
     /// ```
-    /// 2502_032_L4-P6-DN-MC-ST.txt  (Feb 1, 2025, L4 Munge, Pass Count 6, Natural Data, Cryptographic, Scoring True)
-    /// 2501_015_L3-P5-DC-ME-SF.txt  (Jan 15, 2025, L3 Munge, Pass Count 5, Combined Data, Exploratory, Scoring False)
+    /// 2502_032_L4-P6-DN-MC-SP.txt  (Feb 1, 2025, L4 Munge, Pass Count 6, Natural Data, Cryptographic, Scoring Practical)
+    /// 2501_015_L3-P5-DC-ME-SM.txt  (Jan 15, 2025, L3 Munge, Pass Count 5, Combined Data, Exploratory, Scoring Metric)
     /// ```
     ///
     /// 🚀 This naming convention prevents accidental overwrites and allows easy sorting.
@@ -2914,12 +2134,12 @@ public static class UtilityHelpers
         var passCount = localEnv.Globals.PassCount;
         var dataType = localEnv.Globals.InputType.ToString()[0]; // ✅ 1st Char of InputType
         var mode = localEnv.Globals.Mode.ToString()[0]; // ✅ 1st Char of Mode
-        var useMetricScoring = localEnv.Globals.UseMetricScoring ? 'T' : 'F';
+        var scoringMode = localEnv.Globals.ScoringMode.ToString()[0];
 
         // ✅ Keep the prefix (e.g., "Contenders," or "MungeFailDB,")
         var lengthSegment = sequenceLength.HasValue ? $"-L{sequenceLength}" : "";
 
-        var basename = $"{prefix}{lengthSegment}-P{passCount}-D{dataType}-M{mode}-S{useMetricScoring}";
+        var basename = $"{prefix}{lengthSegment}-P{passCount}-D{dataType}-M{mode}-S{scoringMode}";
 
         return string.IsNullOrEmpty(extension) ? basename : basename + "." + extension.TrimStart('.');
     }
@@ -3047,11 +2267,11 @@ public static class UtilityHelpers
                 settings["Mode"] = part.Substring(1); // *-Mx-* (Mode: C, E)
 
             else if (part.StartsWith("S", StringComparison.OrdinalIgnoreCase))
-                settings["UseMetricScoring"] = part.Substring(1); // *-Sx-* (Scoring: T, F)
+                settings["ScoringMode"] = part.Substring(1); // *-Sx-* (Scoring: Practical, Metric)
 
         if (settings.Count != 5)
             throw new InvalidOperationException(
-                "Missing required settings in filename. Expected 5 settings (MaxSequenceLen, PassCount, InputType, Mode, UseMetricScoring).");
+                "Missing required settings in filename. Expected 5 settings (MaxSequenceLen, PassCount, InputType, Mode, ScoringMode).");
 
         return settings;
     }
@@ -3063,7 +2283,7 @@ public static class UtilityHelpers
         string? passCount = null;
         string? inputType = null;
         string? mode = null;
-        string? useMetricScoring = null;
+        string? scoringMode = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -3087,7 +2307,7 @@ public static class UtilityHelpers
             }
             else if (arg.StartsWith("-S", StringComparison.OrdinalIgnoreCase))
             {
-                useMetricScoring = arg.Substring(2); // Remove "-S"
+                scoringMode = arg.Substring(2); // Remove "-S"
             }
             // Handle key-value pairs (e.g., -Rounds=10)
             else if (arg.Contains("="))
@@ -3119,12 +2339,12 @@ public static class UtilityHelpers
             settings["InputType"] = inputType;
         if (mode != null)
             settings["Mode"] = mode;
-        if (useMetricScoring != null)
-            settings["UseMetricScoring"] = useMetricScoring;
+        if (scoringMode != null)
+            settings["ScoringMode"] = scoringMode;
 
 
         // Check for all required settings.  Use settings.ContainsKey, so we can support any setting.
-        var requiredKeys = new string[] { "MaxSequenceLen", "PassCount", "InputType", "Mode", "UseMetricScoring" };
+        var requiredKeys = new string[] { "MaxSequenceLen", "PassCount", "InputType", "Mode", "scoringMode" };
         foreach (var key in requiredKeys)
             if (!settings.ContainsKey(key))
                 throw new InvalidOperationException(
@@ -3133,34 +2353,16 @@ public static class UtilityHelpers
         return settings;
     }
 
-    public static Dictionary<string, string> GetEnvironmentSettings(ExecutionEnvironment exeEnv)
-    {
-        var settings = new Dictionary<string, string>
-        {
-            { "MaxSequenceLen", exeEnv.Globals.MaxSequenceLen.ToString() },
-            { "PassCount", exeEnv.Globals.PassCount.ToString() },
-            { "InputType", exeEnv.Globals.InputType.ToString() },
-            { "Mode", exeEnv.Globals.Mode.ToString() },
-            { "UseMetricScoring", exeEnv.Globals.UseMetricScoring ? "T" : "F" }
-        };
-
-        if (settings.Count != 5)
-            throw new InvalidOperationException(
-                "Missing required settings in ExecutionEnvironment. Expected 5 settings (MaxSequenceLen, PassCount, InputType, Mode, UseMetricScoring).");
-
-        return settings;
-    }
-
     /// <summary>
     /// Retrieves matching Munge result files based on user-specified parameters.
     ///
     /// 🧠 Flexible File Matching:
-    /// - Default pattern: `Contenders,-L4-P6-D?-MC-SF.txt`
-    /// - Arguments passed in (e.g., `-L5`, `-DN`, `-SF`) will dynamically replace components of the pattern.
+    /// - Default pattern: `Contenders,-L4-P6-D?-MC-SP.txt`
+    /// - Arguments passed in (e.g., `-L5`, `-DN`, `-SP`) will dynamically replace components of the pattern.
     ///
     /// ✅ Examples:
-    /// - `-L5` → `Contenders,-L5-P6-D?-MC-SF.txt`
-    /// - `-L5 -P0 -DR -ME -SF` → `Contenders,-L5-P0-DR-ME-SF.txt`
+    /// - `-L5` → `Contenders,-L5-P6-D?-MC-SP.txt`
+    /// - `-L5 -P0 -DR -ME -SP` → `Contenders,-L5-P0-DR-ME-SP.txt`
     ///
     /// 🚨 The full resolved pattern is shown to the user before continuing.
     /// User must confirm (Y/N) to proceed.
@@ -3170,7 +2372,7 @@ public static class UtilityHelpers
     /// </summary>
     public static string[] GetMungeFiles(string[] args)
     {
-        var defaultPattern = "Contenders,-L4-P6-D?-MC-SF.txt";
+        var defaultPattern = "Contenders,-L4-P6-D?-MC-SP.txt";
         var resolvedPattern = defaultPattern;
 
         foreach (var arg in args)
@@ -3183,7 +2385,7 @@ public static class UtilityHelpers
             else if (arg.StartsWith("-M", StringComparison.OrdinalIgnoreCase))
                 resolvedPattern = Regex.Replace(resolvedPattern, @"-M[CFE]", arg, RegexOptions.IgnoreCase);
             else if (arg.StartsWith("-S", StringComparison.OrdinalIgnoreCase))
-                resolvedPattern = Regex.Replace(resolvedPattern, @"-S[T|F]", arg, RegexOptions.IgnoreCase);
+                resolvedPattern = Regex.Replace(resolvedPattern, @"-S[P|M]", arg, RegexOptions.IgnoreCase);
 
         string[] matchingFiles = GetMungeFiles(args, resolvedPattern);
         if (matchingFiles.Length == 0) return Array.Empty<string>();
@@ -3195,7 +2397,7 @@ public static class UtilityHelpers
     /// Retrieves the top contender sequences from Munge(A) output files and extracts a specified number of transforms.
     /// </summary>
     /// <param name="env">The execution environment containing cryptographic context.</param>
-    /// <param name="pattern">The file pattern to match contender files (e.g., "Contenders,-L4-P6-D?-MC-SF.txt").</param>
+    /// <param name="pattern">The file pattern to match contender files (e.g., "Contenders,-L4-P6-D?-MC-SP.txt").</param>
     /// <param name="contenders">The number of top contender sequences to retrieve.</param>
     /// <param name="transforms">The number of transforms to extract from each sequence (starting from the left).</param>
     /// <returns>A list of byte arrays, where each array represents a sequence of transform IDs.</returns>
@@ -3357,7 +2559,7 @@ public static class UtilityHelpers
         var index = filename.IndexOf(flag, StringComparison.OrdinalIgnoreCase);
         if (index == -1) return null; // Flag not found
 
-        // ✅ Extract the flag's value (e.g., "-DC", "-DN", "-SF", etc.)
+        // ✅ Extract the flag's value (e.g., "-DC", "-DN", "-SP", etc.)
         var start = index + flag.Length;
 
         // ✅ Iterate until we find a non-alphanumeric character
@@ -3394,7 +2596,7 @@ public static class UtilityHelpers
     public static class MungeStatePersistence
     {
         public static void SaveMungeState(
-            List<(List<byte> Sequence, double AggregateScore, List<CryptoAnalysis.AnalysisResult> Metrics)> contenders,
+            List<(List<byte> Sequence, double AggregateScore, List<CryptoAnalysisCore.AnalysisResult> Metrics)> contenders,
             int length,
             byte[] transforms,
             byte[] sequence,
@@ -3459,7 +2661,7 @@ public static class UtilityHelpers
         {
             public List<byte>? Sequence { get; set; }
             public double AggregateScore { get; set; }
-            public List<CryptoAnalysis.AnalysisResult>? Metrics { get; set; }
+            public List<CryptoAnalysisCore.AnalysisResult>? Metrics { get; set; }
         }
 
         public class MungeState
@@ -3471,152 +2673,380 @@ public static class UtilityHelpers
         }
     }
 
-
-    public static (byte[] MangoAvalanchePayload, byte[] AESAvalanchePayload, byte[] MangoKeyDependencyPayload, byte[]
-        ? AESKeyDependencyPayload)
+    public static (
+        byte[] MangoAvalanchePayload,
+        byte[]? AESAvalanchePayload,
+        byte[] MangoKeyDependencyPayload,
+        byte[]? AESKeyDependencyPayload)
         ProcessAvalancheAndKeyDependency(
-            ExecutionEnvironment localEnv,
+            CryptoLib cryptoLib,
+            byte[] input,
             string password,
-            List<byte> sequence,
+            InputProfile profile,
             bool processAes = false)
     {
-        // Generate reverse sequence
-        var reverseSequence = GenerateReverseSequence(localEnv.Crypto, sequence.ToArray());
+        // ✂️ Use normalized core logic from Mango.Common
+        var (mangoAvalanchePayload, mangoKeyDependencyPayload) =
+            Mango.Common.Scoring.ProcessAvalancheAndKeyDependency(cryptoLib, input, password, profile);
 
-        // Modify input and password
-        var modifiedInput = ModifyInput(reverseSequence, localEnv.Globals.Input);
-        var modifiedPassword = Encoding.UTF8.GetString(ModifyInput(reverseSequence, Encoding.UTF8.GetBytes(password))!);
+        // 🔐 AES Avalanche (optional)
+        byte[]? aesAvalanchePayload = null;
+        byte[]? aesKeyDependencyPayload = null;
 
-        // Avalanche: Mango encryption with modified input
-        var mangoAvalanchePayload = localEnv.Crypto.Encrypt(sequence.ToArray(), modifiedInput);
-        mangoAvalanchePayload = localEnv.Crypto.GetPayloadOnly(mangoAvalanchePayload);
-
-        // Avalanche: AES encryption with modified input (conditionally processed)
-        byte[] aesAvalanchePayload = null!;
         if (processAes)
         {
-            aesAvalanchePayload = AesEncrypt(modifiedInput, password, out var saltLength, out var paddingLength);
-            aesAvalanchePayload = ExtractAESPayload(aesAvalanchePayload, saltLength, paddingLength);
+            // Re-derive mutated input and password for AES processing
+            var mutationSeed = Mango.Common.Scoring.MutationSeed;
+            var modifiedInput = Mango.Common.Scoring.ModifyInput(mutationSeed, input);
+            var modifiedPasswordBytes = Mango.Common.Scoring.ModifyInput(mutationSeed, Encoding.UTF8.GetBytes(password));
+            var modifiedPassword = Encoding.UTF8.GetString(modifiedPasswordBytes!);
+
+            aesAvalanchePayload = AesEncrypt(modifiedInput, password, out var saltLen1, out var padLen1);
+            aesAvalanchePayload = ExtractAESPayload(aesAvalanchePayload, saltLen1, padLen1);
+
+            aesKeyDependencyPayload = AesEncrypt(input, modifiedPassword, out var saltLen2, out var padLen2);
+            aesKeyDependencyPayload = ExtractAESPayload(aesKeyDependencyPayload, saltLen2, padLen2);
         }
 
-        // KeyDependency: Setup local CryptoLib with modified password
-        var options = new CryptoLibOptions(
-            localEnv.Globals.Rounds, // ✅ Use dynamically set rounds
-            new byte[] { 0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F, 0x70, 0x81, 0x92, 0xA3, 0xB4, 0xC5 }
+        return (
+            MangoAvalanchePayload: mangoAvalanchePayload,
+            AESAvalanchePayload: aesAvalanchePayload,
+            MangoKeyDependencyPayload: mangoKeyDependencyPayload,
+            AESKeyDependencyPayload: aesKeyDependencyPayload
         );
-        var kDcryptoLib = new CryptoLib(modifiedPassword, options);
-
-        // KeyDependency: Mango encryption with modified password
-        var mangoKeyDependencyPayload = kDcryptoLib.Encrypt(sequence.ToArray(), localEnv.Globals.Input);
-        mangoKeyDependencyPayload = kDcryptoLib.GetPayloadOnly(mangoKeyDependencyPayload);
-
-        // KeyDependency: AES encryption with modified password (conditionally processed)
-        byte[] aesKeyDependencyPayload = null!;
-        if (processAes)
-        {
-            aesKeyDependencyPayload = AesEncrypt(localEnv.Globals.Input, modifiedPassword, out var saltLength,
-                out var paddingLength);
-            aesKeyDependencyPayload = ExtractAESPayload(aesKeyDependencyPayload, saltLength, paddingLength);
-        }
-
-        // Return results as a tuple
-        return (mangoAvalanchePayload, aesAvalanchePayload, mangoKeyDependencyPayload, aesKeyDependencyPayload);
-    }
-
-    /// <summary>
-    /// Modifies the input buffer by flipping a bit determined based on the reverse sequence.
-    /// </summary>
-    /// <param name="reverseSequence">The reverse sequence used to determine the bit to flip.</param>
-    /// <param name="input">The original input buffer to be modified.</param>
-    /// <returns>A new byte array with a single bit flipped.</returns>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static byte[] ModifyInput(byte[] reverseSequence, byte[] input)
-    {
-        // Hash the reverse sequence to determine the bit to flip
-        using var sha256 = SHA256.Create();
-        var reverseHash = sha256.ComputeHash(reverseSequence);
-        var hashValue = BinaryPrimitives.ReadInt64LittleEndian(reverseHash); // Convert first 8 bytes to a long
-
-        var totalBits = input.Length * 8; // Total number of bits in the input
-        var bitToFlip = (int)(Math.Abs(hashValue) % totalBits); // Map hash to a valid bit index
-
-        // Create a copy of the input and flip the calculated bit
-        var modifiedInput = (byte[])input.Clone();
-        var byteIndex = bitToFlip / 8;
-        var bitIndex = bitToFlip % 8;
-        modifiedInput[byteIndex] ^= (byte)(1 << bitIndex); // Flip the bit
-
-        return modifiedInput;
     }
 
     public static byte[] AesEncrypt(byte[] input, string password, out int saltLength, out int paddingLength)
     {
-        // Generate a random salt
-        var salt = GenerateRandomBytes(16);
-        saltLength = salt.Length; // Return salt length
+        // use a fixed salt for tests
+        var salt = AesSalt;
+        saltLength = salt.Length;
 
         // Derive the key and IV using PBKDF2
-        using (var deriveBytes = new Rfc2898DeriveBytes(
-                   password,
-                   salt,
-                   100_000,
-                   HashAlgorithmName.SHA256)) // ✅ Explicit and modern
-        {
-            var key = deriveBytes.GetBytes(32); // AES-256 key
-            var iv = deriveBytes.GetBytes(16);  // AES block size (128 bits)
+        using var deriveBytes = new Rfc2898DeriveBytes(password, salt, 100_000, HashAlgorithmName.SHA256);
+        var key = deriveBytes.GetBytes(32); // AES-256
+        var iv = deriveBytes.GetBytes(16);
 
-            using (var aes = Aes.Create())
-            {
-                aes.Key = key;
-                aes.IV = iv;
-                aes.Mode = CipherMode.CBC;
-                aes.Padding = PaddingMode.PKCS7;
+        var aes = new AesSoftwareCore.AesSoftwareCore(key);
+        var encryptedData = aes.EncryptCbc(input, iv);
 
-                using (var encryptor = aes.CreateEncryptor())
-                {
-                    var encryptedData = encryptor.TransformFinalBlock(input, 0, input.Length);
+        paddingLength = encryptedData.Length - input.Length; // Matches TransformFinalBlock behavior
 
-                    // ✅ Calculate padding length
-                    paddingLength = encryptedData.Length - input.Length;
+        // Prepend salt to match expected format
+        var result = new byte[salt.Length + encryptedData.Length];
+        Buffer.BlockCopy(salt, 0, result, 0, salt.Length);
+        Buffer.BlockCopy(encryptedData, 0, result, salt.Length, encryptedData.Length);
 
-                    // ✅ Prepend salt to encrypted data
-                    var result = new byte[salt.Length + encryptedData.Length];
-                    Buffer.BlockCopy(salt, 0, result, 0, salt.Length);
-                    Buffer.BlockCopy(encryptedData, 0, result, salt.Length, encryptedData.Length);
-
-                    return result;
-                }
-            }
-        }
+        return result;
     }
-
-    public static byte[] GenerateRandomBytes(int length)
+    public static byte[] AesDecrypt(byte[] encryptedInput, string password)
     {
-        var bytes = new byte[length];
-        using (var rng = RandomNumberGenerator.Create())
-        {
-            rng.GetBytes(bytes);
-        }
+        // Use the known test salt
+        var salt = AesSalt;
 
-        return bytes;
+        if (encryptedInput.Length < salt.Length)
+            throw new ArgumentException("Encrypted data is too short to contain salt.");
+
+        var ciphertext = new byte[encryptedInput.Length - salt.Length];
+        Buffer.BlockCopy(encryptedInput, salt.Length, ciphertext, 0, ciphertext.Length);
+
+        using var deriveBytes = new Rfc2898DeriveBytes(password, salt, 100_000, HashAlgorithmName.SHA256);
+        var key = deriveBytes.GetBytes(32); // AES-256
+        var iv = deriveBytes.GetBytes(16);
+
+        var aes = new AesSoftwareCore.AesSoftwareCore(key);
+        return aes.DecryptCbc(ciphertext, iv);
     }
 
     public static byte[] ExtractAESPayload(byte[] encryptedData, int saltLength, int paddingLength)
     {
-        // Calculate the core length by excluding salt and padding
         var coreLength = encryptedData.Length - saltLength - paddingLength;
-
-        // Use LINQ to skip the salt and take the core length
         return encryptedData.Skip(saltLength).Take(coreLength).ToArray();
     }
 
+
+    public static class CsvFormatter
+{
+    /// <summary>
+    /// Displays formatted CSV data from a file path to the console.
+    /// </summary>
+    /// <param name="csvFilePath">The path to the CSV file.</param>
+    public static void DisplayCsvFormatted(string csvFilePath)
+    {
+        if (!File.Exists(csvFilePath))
+        {
+            Console.WriteLine($"Error: File not found at {csvFilePath}");
+            return;
+        }
+
+        var lines = File.ReadAllLines(csvFilePath);
+        DisplayCsvFormatted(lines); // Call the new overload
+    }
+
+        /// <summary>
+        /// Displays formatted CSV data from a collection of strings (lines) to the console.
+        /// Assumes the first string(s) are titles, and the actual CSV header is on the third line (index 2).
+        /// </summary>
+        /// <param name="csvLines">A collection of strings, where each string represents a line from the CSV.</param>
+#if true
+public static void DisplayCsvFormatted(IEnumerable<string> csvLines)
+{
+    var linesList = csvLines?.ToList(); // Convert to list to handle multiple enumerations and check for null
+
+    if (linesList == null || linesList.Count < 3)
+    {
+        Console.WriteLine("CSV data is empty or malformed (expected at least 3 lines: title, empty, header).");
+        return;
+    }
+
+    // Print title and spacer
+    Console.WriteLine(linesList[0]);
+    Console.WriteLine(linesList[1]);
+
+    // Parse header and data
+    var headers = linesList[2].Split(',').Select(h => h.Trim()).ToArray();
+    var dataRows = linesList.Skip(3).Select(line => line.Split(',').Select(c => c.Trim()).ToArray()).ToList();
+
+    // Compute column widths using max of header and data visual length
+    int[] columnWidths = new int[headers.Length];
+
+    for (int i = 0; i < headers.Length; i++)
+    {
+        int maxWidth = GetVisualLength(headers[i]);
+
+        foreach (var row in dataRows)
+        {
+            if (i < row.Length)
+            {
+                int cellWidth = GetVisualLength(row[i]);
+                if (cellWidth > maxWidth)
+                    maxWidth = cellWidth;
+            }
+        }
+
+        columnWidths[i] = maxWidth + 2; // Add padding
+    }
+
+    // Print header and divider
+    PrintLine(columnWidths);
+    PrintRow(headers, columnWidths);
+    PrintLine(columnWidths);
+
+    // Print data rows
+    foreach (var row in dataRows)
+    {
+        string[] currentRowValues = new string[headers.Length];
+        Array.Copy(row, currentRowValues, Math.Min(row.Length, headers.Length));
+        for (int i = row.Length; i < headers.Length; i++)
+            currentRowValues[i] = "";
+
+        PrintRow(currentRowValues, columnWidths);
+    }
+
+    PrintLine(columnWidths);
+}
+
+private static void PrintLine(int[] columnWidths)
+{
+    Console.WriteLine(new string('-', columnWidths.Sum() + (columnWidths.Length - 1) * 3 + 2));
+}
+
+private static void PrintRow(string[] rowValues, int[] columnWidths)
+{
+    for (int i = 0; i < rowValues.Length; i++)
+    {
+        var value = rowValues[i];
+        var originalColor = Console.ForegroundColor;
+
+        // Apply color if emoji prefix is present
+        bool hasEmoji = value.StartsWith("✅") || value.StartsWith("❌") || value.StartsWith("❓");
+
+        if (hasEmoji)
+        {
+            if (value.StartsWith("✅"))
+                Console.ForegroundColor = ConsoleColor.Green;
+            else if (value.StartsWith("❌"))
+                Console.ForegroundColor = ConsoleColor.Red;
+            else if (value.StartsWith("❓"))
+                Console.ForegroundColor = ConsoleColor.Yellow;
+        }
+
+        int visualLength = GetVisualLength(value);
+        int extraPadding = hasEmoji ? value.Length - visualLength : 0;
+        int padLength = columnWidths[i] + extraPadding;
+
+        Console.Write(value.PadRight(padLength));
+        Console.ForegroundColor = originalColor;
+        Console.Write(" | ");
+    }
+    Console.WriteLine();
+}
+
+
+        private static int GetVisualLength(string s)
+{
+    int length = 0;
+    for (int i = 0; i < s.Length; i++)
+    {
+        if (char.IsSurrogatePair(s, i))
+        {
+            length += 1;
+            i++; // Skip the low surrogate
+        }
+        else
+        {
+            length += 1;
+        }
+    }
+    return length;
+}
+
+#else
+        public static void DisplayCsvFormatted(IEnumerable<string> csvLines)
+    {
+        var linesList = csvLines?.ToList(); // Convert to list to handle multiple enumerations and check for null
+
+        // We expect at least 3 lines: Title, Empty, Header
+        if (linesList == null || linesList.Count < 3)
+        {
+            Console.WriteLine("CSV data is empty or malformed (expected at least 3 lines: title, empty, header).");
+            return;
+        }
+
+        // Print the initial title and empty line directly
+        Console.WriteLine(linesList[0]); // e.g., "🔶 Mango Metric Breakdown"
+        Console.WriteLine(linesList[1]); // The empty line
+
+        // The actual header is at index 2
+        var headers = linesList[2].Split(',').Select(h => h.Trim()).ToArray();
+        // The data rows start from index 3
+        var dataRows = linesList.Skip(3).Select(line => line.Split(',').Select(c => c.Trim()).ToArray()).ToList();
+
+        // Determine maximum column widths
+        int[] columnWidths = new int[headers.Length];
+        for (int i = 0; i < headers.Length; i++)
+        {
+            columnWidths[i] = headers[i].Length; // Start with header length
+        }
+
+        foreach (var row in dataRows)
+        {
+            // Ensure bounds checking for rows that might have fewer columns than headers
+            for (int i = 0; i < row.Length && i < headers.Length; i++)
+            {
+                //if (row[i].Length > columnWidths[i])
+                //{
+                //    columnWidths[i] = row[i].Length;
+                //}
+
+                int visualLength = GetVisualLength(row[i]);
+                if (visualLength > columnWidths[i])
+                {
+                    columnWidths[i] = visualLength;
+                }
+
+                }
+            }
+
+        // Add some padding
+        for (int i = 0; i < columnWidths.Length; i++)
+        {
+            columnWidths[i] += 2; // Add 2 spaces for padding
+        }
+
+        // Print Header and Data Table
+        PrintLine(columnWidths);
+        PrintRow(headers, columnWidths);
+        PrintLine(columnWidths);
+
+        // Print Data
+        foreach (var row in dataRows)
+        {
+            // Create a temporary array to hold row values, ensuring it matches header length
+            string[] currentRowValues = new string[headers.Length];
+            Array.Copy(row, currentRowValues, Math.Min(row.Length, headers.Length)); // Copy existing values
+            for (int i = row.Length; i < headers.Length; i++)
+            {
+                currentRowValues[i] = ""; // Fill any missing columns with empty strings
+            }
+            PrintRow(currentRowValues, columnWidths);
+        }
+        PrintLine(columnWidths);
+    }
+    static int GetVisualLength(string s)
+    {
+        // Treat emoji as 1 visual char
+        int length = 0;
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (char.IsSurrogatePair(s, i))
+            {
+                length += 1; // Count emoji or surrogate as one
+                i++;         // Skip the low surrogate
+            }
+            else
+            {
+                length += 1;
+            }
+        }
+        return length;
+    }
+
+        private static void PrintLine(int[] columnWidths)
+    {
+        // This calculates the total length of the line including column contents, padding, and separators.
+        // For N columns, the pattern is "| Content | Content | ... | Content |"
+        // Each column adds its width + 3 characters for the delimiter (' ', '|', ' ') EXCEPT the very last one.
+        // Total length = Sum(padded column widths) + (number of columns * 3) + 1 (for the initial '|' and final ' ')
+        int totalLineLength = columnWidths.Sum() + (columnWidths.Length * 3) + 1;
+        Console.WriteLine(new string('-', totalLineLength));
+    }
+
+    // Using the color-aware PrintRow
+    private static void PrintRow(string[] rowValues, int[] columnWidths)
+    {
+        Console.Write("| "); // Start of the row
+
+        for (int i = 0; i < rowValues.Length; i++)
+        {
+            var value = rowValues[i];
+            var originalColor = Console.ForegroundColor; // Save current color
+
+            // Apply color based on emoji prefix
+            if (value.StartsWith("✅"))
+                Console.ForegroundColor = ConsoleColor.Green;
+            else if (value.StartsWith("❌"))
+                Console.ForegroundColor = ConsoleColor.Red;
+            else if (value.StartsWith("❓"))
+                Console.ForegroundColor = ConsoleColor.Yellow;
+            else
+                Console.ForegroundColor = ConsoleColor.Gray; // Default data color
+
+            // Write the value, padded to its column width
+            Console.Write(value.PadRight(columnWidths[i]));
+
+            // Reset color before writing the delimiter for the next column
+            Console.ForegroundColor = originalColor;
+
+            // Write the column delimiter
+            Console.Write(" | ");
+        }
+        Console.WriteLine(); // End the row with a newline
+    }
+#endif
+    }
+
+    // Example Usage:
+    // Create a dummy CSV file for testing
+    // File.WriteAllText("test.csv", "Name,Age,City\nAlice,30,New York\nBob,25,San Francisco\nCharlie,35,Los Angeles");
+    // CsvFormatter.DisplayCsvFormatted("test.csv");
     [Flags]
     public enum HeaderOptions
     {
         None = 0,
         Mode = 1 << 0,
         InputType = 1 << 1,
-        MetricScoring = 1 << 2,
+        ScoringMode = 1 << 2,
         GlobalRounds = 1 << 3,
         PassCount = 1 << 4,
         MaxSequenceLength = 1 << 5,
@@ -3625,7 +3055,7 @@ public static class UtilityHelpers
         Reversibility = 1 << 8, // 🆕 Reversibility check
 
         // 🆕 All standard execution-related options
-        AllExecution = Mode | InputType | MetricScoring | GlobalRounds | PassCount | MaxSequenceLength,
+        AllExecution = Mode | InputType | ScoringMode | GlobalRounds | PassCount | MaxSequenceLength,
 
         // 🆕 All cryptanalysis-related options
         AllAnalysis = Sequence | AggregateScore | Reversibility,
@@ -3634,13 +3064,19 @@ public static class UtilityHelpers
         All = AllExecution | AllAnalysis
     }
 
+    public static string FormatScoreWithPassRatio(double score, List<AnalysisResult> results, double elapsedMs)
+    {
+        int passCount = results.Count(r => r.Passed);
+        int total = results.Count;
+        return $"({score:F4}) ({passCount} / {total}) ({elapsedMs:F2}ms)";
+    }
     public static List<string> GenerateHeader(
         ExecutionEnvironment localEnv,
         string? title = null,
         string? name = null,
         HeaderOptions options = HeaderOptions.None,
         string? formattedSequence = null, // 🆕 Optional formatted sequence for cryptanalysis
-        List<CryptoAnalysis.AnalysisResult>? analysisResults = null, // 🆕 Optional analysis results
+        List<CryptoAnalysisCore.AnalysisResult>? analysisResults = null, // 🆕 Optional analysis results
         bool? isReversible = null, // 🆕 Nullable to indicate optional usage
         string? additionalInfo = null) // 🆕 New additional info parameter
     {
@@ -3664,12 +3100,12 @@ public static class UtilityHelpers
         if (options.HasFlag(HeaderOptions.InputType))
             output.Add($"<Gray>InputType:</Gray> <Green>{localEnv.Globals.InputType}</Green>");
 
-        if (options.HasFlag(HeaderOptions.MetricScoring))
+        if (options.HasFlag(HeaderOptions.ScoringMode))
             output.Add(
-                $"<Gray>Metric Scoring:</Gray> <Green>{(localEnv.Globals.UseMetricScoring ? "Enabled" : "Disabled")}</Green>");
+                $"<Gray>Scoring Mode:</Gray> <Green>{localEnv.Globals.ScoringMode}</Green>");
 
         if (options.HasFlag(HeaderOptions.GlobalRounds))
-            output.Add($"<Gray>GR (Global Rounds):</Gray> <Green>{localEnv.Crypto.Options.Rounds}</Green>");
+            output.Add($"<Gray>GR (Global Rounds):</Gray> <Green>{localEnv.Globals.Rounds}</Green>");
 
         if (options.HasFlag(HeaderOptions.MaxSequenceLength))
             output.Add($"<Gray>Max Sequence Length:</Gray> <Green>{localEnv.Globals.MaxSequenceLen}</Green>");
@@ -3677,8 +3113,10 @@ public static class UtilityHelpers
         // 🆕 Add CryptAnalysis-specific options
         if (analysisResults != null)
         {
+            AssertWeightsMatchExpectedMode(localEnv);
+
             var aggregateScore =
-                localEnv.CryptoAnalysis.CalculateAggregateScore(analysisResults, localEnv.Globals.UseMetricScoring);
+                localEnv.CryptoAnalysis.CalculateAggregateScore(analysisResults, localEnv.Globals.ScoringMode);
             var passCount = analysisResults.Count(result => result.Passed);
             var totalMetrics = analysisResults.Count;
             var color = isReversible == true ? "Green" : "Red";
@@ -4097,6 +3535,308 @@ public static class UtilityHelpers
         return Generate(Array.Empty<byte>());
     }
 
+    public static class PermutationEngine
+    {
+        // Entry point — safe for use in all existing and future code
+        public static IEnumerable<byte[]> GeneratePermutations(
+            List<byte> transformIds,
+            int length,
+            List<byte>? required = null,
+            bool allowWildcardRepeat = true,
+            List<byte>? noRepeat = null)
+
+        {
+            if (required == null || required.Count == 0)
+            {
+                foreach (var seq in GenerateBasicPermutations(transformIds, length))
+                {
+                    if (noRepeat != null && noRepeat.Any(id => seq.Count(t => t == id) > 1))
+                        continue;
+
+                    yield return seq;
+                }
+
+                yield break; // ← 🔒 Required to avoid continuing into the second branch
+            }
+
+            int wildcardCount = length - required.Count;
+            if (wildcardCount < 0)
+                yield break;
+
+            var wildcardSet = transformIds.Except(required).ToList();
+            var wildcardCombos = GenerateWildcardCombinations(wildcardSet, wildcardCount, allowWildcardRepeat);
+
+            foreach (var wildcards in wildcardCombos)
+            {
+                var seen = new HashSet<string>(); // Use string key to avoid duplicates
+
+                foreach (var fullSequence in InterleaveRequiredWithWildcards(required, wildcards))
+                {
+                    if (noRepeat != null && noRepeat.Any(id => fullSequence.Count(t => t == id) > 1))
+                        continue;
+
+                    var key = string.Join(",", fullSequence);
+                    if (seen.Contains(key)) continue;
+                    seen.Add(key);
+
+                    yield return fullSequence.ToArray();
+                }
+
+            }
+        }
+
+
+        // Original behavior — untouched
+        private static IEnumerable<byte[]> GenerateBasicPermutations(List<byte> transformIds, int length)
+        {
+            IEnumerable<byte[]> Generate(byte[] sequence)
+            {
+                if (sequence.Length == length)
+                {
+                    yield return sequence;
+                    yield break;
+                }
+
+                foreach (var transformId in transformIds)
+                {
+                    var newSequence = new byte[sequence.Length + 1];
+                    sequence.CopyTo(newSequence, 0);
+                    newSequence[^1] = transformId;
+
+                    foreach (var result in Generate(newSequence))
+                        yield return result;
+                }
+            }
+
+            return Generate(Array.Empty<byte>());
+        }
+
+        // Generates all wildcard-only combinations (length = wildcardCount)
+        private static IEnumerable<List<byte>> GenerateWildcardCombinations(List<byte> wildcardSet, int length, bool allowRepeat)
+        {
+            IEnumerable<List<byte>> Generate(List<byte> sequence)
+            {
+                if (sequence.Count == length)
+                {
+                    yield return sequence;
+                    yield break;
+                }
+
+                foreach (var id in wildcardSet)
+                {
+                    if (!allowRepeat && sequence.Contains(id)) continue;
+                    var next = new List<byte>(sequence) { id };
+                    foreach (var combo in Generate(next))
+                        yield return combo;
+                }
+            }
+
+            return Generate(new List<byte>());
+        }
+
+        // Interleaves required + wildcard elements in all positional combinations
+        private static IEnumerable<List<byte>> InterleaveRequiredWithWildcards(List<byte> required, List<byte> wildcards)
+        {
+            var pool = new List<byte>(required.Count + wildcards.Count);
+            pool.AddRange(required);
+            pool.AddRange(wildcards);
+
+            foreach (var permutation in Permute(pool))
+            {
+                if (ContainsAll(permutation, required))
+                    yield return permutation;
+            }
+        }
+
+        // Simple permutation helper (non-recursive)
+        private static IEnumerable<List<byte>> Permute(List<byte> list)
+        {
+            int n = list.Count;
+            var a = list.ToArray();
+            var c = new int[n];
+            yield return new List<byte>(a);
+
+            for (int i = 0; i < n;)
+            {
+                if (c[i] < i)
+                {
+                    if (i % 2 == 0) (a[0], a[i]) = (a[i], a[0]);
+                    else (a[c[i]], a[i]) = (a[i], a[c[i]]);
+                    yield return new List<byte>(a);
+                    c[i] += 1;
+                    i = 0;
+                }
+                else
+                {
+                    c[i] = 0;
+                    i++;
+                }
+            }
+        }
+
+        private static bool ContainsAll(List<byte> sequence, List<byte> required)
+        {
+            foreach (var id in required)
+                if (!sequence.Contains(id)) return false;
+            return true;
+        }
+        public static long CountFilteredPermutations(
+            List<byte> transformIds,
+            int length,
+            List<byte>? required = null,
+            bool allowWildcardRepeat = true,
+            List<byte>? noRepeat = null)
+        {
+            if (required == null || required.Count == 0)
+            {
+                return CountBasicPermutations(transformIds, length, noRepeat);
+            }
+
+            int wildcardCount = length - required.Count;
+            if (wildcardCount < 0)
+                return 0;
+
+            var wildcardSet = transformIds.Except(required).ToList();
+            long total = 0;
+
+            // Use generator-aligned wildcard permutations
+            IEnumerable<IEnumerable<byte>> GenerateWildcardPermutations(List<byte> source, int count)
+            {
+                if (count == 0)
+                {
+                    yield return Enumerable.Empty<byte>();
+                    yield break;
+                }
+
+                foreach (var item in source)
+                {
+                    if (!allowWildcardRepeat && count > 1)
+                    {
+                        var remaining = source.Where(x => x != item).ToList();
+                        foreach (var sub in GenerateWildcardPermutations(remaining, count - 1))
+                            yield return new[] { item }.Concat(sub);
+                    }
+                    else
+                    {
+                        foreach (var sub in GenerateWildcardPermutations(source, count - 1))
+                            yield return new[] { item }.Concat(sub);
+                    }
+                }
+            }
+
+            foreach (var wildcardSeq in GenerateWildcardPermutations(wildcardSet, wildcardCount))
+            {
+                var combined = required.Concat(wildcardSeq).ToList();
+                if (noRepeat != null && noRepeat.Any(id => combined.Count(t => t == id) > 1))
+                    continue;
+
+                total += CountUniquePermutations(combined, required);
+            }
+
+            return total;
+        }
+        private static long CountUniquePermutations(List<byte> combined, List<byte> required)
+        {
+            // Count permutations accounting for repeated elements (multiset)
+            var counts = new Dictionary<byte, int>();
+            foreach (var id in combined)
+            {
+                if (!counts.ContainsKey(id)) counts[id] = 0;
+                counts[id]++;
+            }
+
+            long numerator = Factorial(combined.Count);
+            long denominator = counts.Values
+                .Select(Factorial)
+                .Aggregate(1L, (acc, val) => acc * val);
+
+            return numerator / denominator;
+        }
+        private static long Factorial(int n)
+        {
+            long result = 1;
+            for (int i = 2; i <= n; i++) result *= i;
+            return result;
+        }
+
+        private static long CountBasicPermutations(List<byte> ids, int length, List<byte>? noRepeat)
+        {
+            if (noRepeat == null || noRepeat.Count == 0)
+            {
+                return (long)Math.Pow(ids.Count, length);
+            }
+
+            long count = 0;
+
+            void Recurse(List<byte> sequence)
+            {
+                if (sequence.Count == length)
+                {
+                    if (noRepeat.Any(id => sequence.Count(t => t == id) > 1))
+                        return;
+                    count++;
+                    return;
+                }
+
+                foreach (var id in ids)
+                {
+                    sequence.Add(id);
+                    Recurse(sequence);
+                    sequence.RemoveAt(sequence.Count - 1);
+                }
+            }
+
+            Recurse(new List<byte>());
+            return count;
+        }
+
+        public static double CalculateTotalMungeTime(
+            ExecutionEnvironment localEnv,
+            List<byte> transforms,
+            int length,
+            List<byte>? required = null,
+            bool allowWildcardRepeat = true,
+            List<byte>? noRepeat = null)
+        {
+            double totalTime = 0.0;
+
+            // Use the same permutation engine as the actual Munge run
+            foreach (var seq in PermutationEngine.GeneratePermutations(
+                         transforms,
+                         length,
+                         required: required,
+                         allowWildcardRepeat: allowWildcardRepeat,
+                         noRepeat: noRepeat))
+            {
+                double seqTime = 0.0;
+
+                foreach (var transformId in seq)
+                {
+                    if (!BenchmarkCache.TryGetValue(transformId, out var rawTime))
+                    {
+                        ColorConsole.WriteLine($"<red>[Warning]</red> No benchmark entry found for transform ID {transformId}. Defaulting to 0.");
+                        rawTime = 0.0;
+                    }
+
+                    // Normalize for machine performance
+                    double normalizedTime = rawTime *
+                                            (localEnv.Globals.BenchmarkBaselineTime / localEnv.Globals.CurrentBenchmarkTime);
+
+                    // Scale based on input size
+                    double inputSizeFactor = (double)localEnv.Globals.Input.Length / localEnv.Globals.BenchmarkBaselineSize;
+
+                    // Total cost per transform for all phases (4 ops per round: Encrypt+Decrypt + Avalanche + KeyDependency)
+                    seqTime += normalizedTime * inputSizeFactor * localEnv.Globals.Rounds * 4;
+                }
+
+
+                totalTime += seqTime;
+            }
+
+            return totalTime;
+        }
+    }
+
     /// <summary>
     /// Generates all unique permutations of the given items, preserving element frequency.
     /// - Ensures that the output includes only valid permutations based on input occurrences.
@@ -4106,7 +3846,7 @@ public static class UtilityHelpers
     /// <typeparam name="T">The type of elements in the input collection.</typeparam>
     /// <param name="items">The collection of items to generate permutations from.</param>
     /// <returns>An IEnumerable of arrays, each representing a unique permutation.</returns>
-#if true
+
     public static IEnumerable<T[]> GenerateUniquePermutations<T>(IEnumerable<T> items)
         where T : notnull
     {
@@ -4139,38 +3879,6 @@ public static class UtilityHelpers
         }
     }
 
-#else
-    public static IEnumerable<T[]> GenerateUniquePermutations<T>(IEnumerable<T> items)
-    {
-        var itemList = items.ToList();
-        var itemCounts = itemList
-            .GroupBy(x => x) // Group items by their value
-            .ToDictionary(g => g.Key, g => g.Count()); // Create a dictionary of item counts
-
-        return Permute(new List<T>(), itemList.Count, itemCounts);
-
-        static IEnumerable<T[]> Permute<T>(List<T> current, int remaining, Dictionary<T, int> itemCounts)
-        {
-            if (remaining == 0)
-            {
-                yield return current.ToArray();
-                yield break;
-            }
-
-            foreach (var kvp in itemCounts.Where(kvp => kvp.Value > 0))
-            {
-                current.Add(kvp.Key);
-                itemCounts[kvp.Key]--;
-
-                foreach (var perm in Permute(current, remaining - 1, itemCounts))
-                    yield return perm;
-
-                current.RemoveAt(current.Count - 1);
-                itemCounts[kvp.Key]++;
-            }
-        }
-    }
-#endif
     /// <summary>
     /// Provides static methods for generating and counting sequences by combining meta sequences (byte arrays) with transform sequences (lists of bytes).
     /// This class offers functionality to create permutations where transforms are appended or prepended to meta sequences,
@@ -4251,7 +3959,7 @@ public static class UtilityHelpers
     /// }
     /// </code>
     /// </example>
-#if true
+
     public static IEnumerable<T[]> GenerateLimitedRepetitionSequences<T>(IEnumerable<T> items, int length, int repetitions = 1)
         where T : notnull
     {
@@ -4289,42 +3997,6 @@ public static class UtilityHelpers
         }
     }
 
-#else
-    public static IEnumerable<T[]> GenerateLimitedRepetitionSequences<T>(IEnumerable<T> items, int length, int repetitions = 1)
-    {
-        if (repetitions < 1)
-            throw new ArgumentOutOfRangeException(nameof(repetitions), "Repetitions must be at least 1.");
-        if (length < 0) throw new ArgumentOutOfRangeException(nameof(length), "Length cannot be negative.");
-
-        var distinctItems = items.Distinct().ToList(); // Get distinct items.
-
-        // Use a dictionary to track the allowed repetitions *per item*.
-        var itemCounts = distinctItems.ToDictionary(item => item, item => repetitions);
-
-        return PermuteInternal(new List<T>(), length, itemCounts);
-
-        IEnumerable<T[]> PermuteInternal<T>(List<T> current, int remaining, Dictionary<T, int> itemCounts)
-        {
-            if (current.Count == length) // Use current.Count for exact length
-            {
-                yield return current.ToArray();
-                yield break;
-            }
-
-            foreach (var kvp in itemCounts.Where(kvp => kvp.Value > 0))
-            {
-                current.Add(kvp.Key);
-                itemCounts[kvp.Key]--;
-
-                foreach (var perm in PermuteInternal(current, remaining - 1, itemCounts)) // Decrement remaining
-                    yield return perm;
-
-                current.RemoveAt(current.Count - 1);
-                itemCounts[kvp.Key]++; // Restore the count for backtracking.
-            }
-        }
-    }
-#endif
     public static class PermutationCounter
     {
         public static long CountLimitedRepetitionSequences<T>(IEnumerable<T> items, int length, int repetitions = 1)
@@ -4435,37 +4107,40 @@ public static class UtilityHelpers
     /// <param name="input">The original input data.</param>
     /// <param name="sequence">The sequence of transforms to test.</param>
     /// <returns>A list of analysis results if successful; null if reversibility fails.</returns>
-    public static List<CryptoAnalysis.AnalysisResult>? TestSequence(ExecutionEnvironment localEnv, byte[] sequence)
+    public static List<CryptoAnalysisCore.AnalysisResult>? TestSequence(ExecutionEnvironment localEnv, byte[] sequence)
     {
         try
         {
-            // Apply forward transformations
-            var encrypted = localEnv.Crypto.Encrypt(sequence, localEnv.Globals.Input);
+            // 🎯 Construct profile using flat TR:1 for all transforms
+            var flatTRs = Enumerable.Repeat((byte)1, sequence.Length).ToArray();
+            var profile = InputProfiler.CreateInputProfile(name: "Test",
+                sequence: sequence,
+                tRs: flatTRs, // 👈 TR: 1 for all
+                globalRounds: localEnv.Globals.Rounds);
 
-            // Generate reverse sequence
-            var reverseSequence = GenerateReverseSequence(localEnv.Crypto, sequence);
+            // 🔐 Encrypt using high-level profile API
+            var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            var decrypted = localEnv.Crypto.Decrypt(encrypted);
 
-            // Apply reverse transformations
-            var decrypted = localEnv.Crypto.Decrypt(reverseSequence, encrypted);
-
-            // Check reversibility
-            if (!decrypted!.SequenceEqual(localEnv.Globals.Input))
+            // 🔁 Ensure reversibility
+            if (!decrypted.SequenceEqual(localEnv.Globals.Input))
             {
                 Console.WriteLine("Reversibility check failed for the provided sequence.");
-                return null; // Reversibility failed
+                return null;
             }
 
-            // Extract payload for analysis
+            // 🧪 Extract payload for analysis
             var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
 
-            // Modify a copy of input for Avalanche test and Key Dependency test
+            // 🧬 Perform Avalanche and Key Dependency tests
             var (MangoAvalanchePayload, _, MangoKeyDependencyPayload, _) =
                 ProcessAvalancheAndKeyDependency(
-                    localEnv,
+                    localEnv.Crypto,
+                    localEnv.Globals.Input,
                     GlobalsInstance.Password,
-                    sequence!.ToList());
+                    profile);
 
-            // Run cryptanalysis
+            // 📊 Run cryptanalysis
             return localEnv.CryptoAnalysis.RunCryptAnalysis(
                 payload,
                 MangoAvalanchePayload,
@@ -4474,13 +4149,29 @@ public static class UtilityHelpers
         }
         catch (Exception ex)
         {
-            // Log or handle unexpected errors during the test
-            Console.WriteLine(
-                $"Error during sequence testing: {ex.Message}\nSequence: {Convert.ToHexString(sequence!)}");
+            Console.WriteLine($"Error during sequence testing: {ex.Message}\nSequence: {Convert.ToHexString(sequence)}");
             return null;
         }
     }
+    public sealed class BatchModeScope : IDisposable
+    {
+        private readonly ExecutionEnvironment _env;
+        private readonly bool _original;
 
+        public BatchModeScope(ExecutionEnvironment env, bool mode = true)
+        {
+            _env = env;
+            _original = env.Globals.BatchMode;
+            env.Globals.BatchMode = mode;
+        }
+
+        public void Dispose() => _env.Globals.BatchMode = _original;
+    }
+
+    public static bool IsInteractiveWorkbench(ExecutionEnvironment env)
+    {
+        return env.Globals is { ExitJobComplete: false, BatchMode: false };
+    }
     public static void PressAnyKey(string? explanation = null)
     {
         if (!string.IsNullOrEmpty(explanation))
@@ -4574,56 +4265,109 @@ public static class UtilityHelpers
         var formattedB = b.ToString("F10");
         return formattedA == formattedB;
     }
-
-    public static void BenchmarkAllTransforms(ExecutionEnvironment localEnv)
+    public static int? ParseForInt(string[] args, string keyword)
     {
-        var results = new List<string>();
-        var jsonResults = new List<object>();
+        int index = Array.IndexOf(args, keyword);
+        if (index == -1)
+            return null;
+
+        if (index + 1 >= args.Length || !int.TryParse(args[index + 1], out var value))
+            throw new ArgumentException($"Bad or missing parameter for command argument {keyword}");
+
+        return value;
+    }
+
+    #region Benchmark Stuff
+    public static void EstablishCurrentBenchmarkTime(ExecutionEnvironment parentEnv)
+    {
+        var localEnv = new ExecutionEnvironment(parentEnv);
+        const int benchmarkTransformId = 35; // MaskedCascadeSubFwdFbTx
+        var finalTimePerOp = 0.0;
+
+        using (var localStatEnvironment = new LocalEnvironment(localEnv))
+        {
+            var sampleInput = SetupStandardBenchmarkEnv(localEnv);
+
+            // 🔧 Build a minimal InputProfile with TR:1 and GR:parent setting
+            var profile = InputProfiler.CreateInputProfile(name: "benchmark",
+                sequence: new[] { (byte)benchmarkTransformId },
+                tRs: new byte[] { 1 },
+                globalRounds: localEnv.Globals.Rounds
+            );
+
+            // Encrypt timing
+            var sw = Stopwatch.StartNew();
+            var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, sampleInput);
+            sw.Stop();
+            var encryptTime = sw.Elapsed.TotalMilliseconds / profile.GlobalRounds;
+
+            // Decrypt timing
+            sw.Restart();
+            var decrypted = localEnv.Crypto.Decrypt(encrypted);
+            sw.Stop();
+            var decryptTime = sw.Elapsed.TotalMilliseconds / profile.GlobalRounds;
+
+            finalTimePerOp = (encryptTime + decryptTime) / 2;
+
+            // ☠️ WARNING: This must go to parentEnv, not localEnv!
+            parentEnv.Globals.CurrentBenchmarkTime = finalTimePerOp;
+
+            // Optional validation
+            // Debug.Assert(decrypted.SequenceEqual(sampleInput));
+        }
+    }
+    public static void BenchmarkAllTransforms(ExecutionEnvironment parentEnv)
+    {
+        var localEnv = new ExecutionEnvironment(parentEnv);
+        var rawResults = new List<(string Text, string Name, byte Id, double TimePerOp)>();
         var totalTime = 0.0;
 
         using (var localStatEnvironment = new LocalEnvironment(localEnv))
         {
-            localEnv.Globals.UpdateSetting("InputType", InputType.Random);
-            localEnv.Globals.UpdateSetting("Rounds", byte.MaxValue.ToString());
-            var sampleInput = localEnv.Globals.Input;
+            var sampleInput = SetupStandardBenchmarkEnv(localEnv);
+            var globalRounds = localEnv.Globals.Rounds;
 
             foreach (var kvp in localEnv.Crypto.TransformRegistry)
             {
-                var transformId = kvp.Key;
+                var transformId = (byte)kvp.Key;
                 var transform = kvp.Value;
 
-                var singleTransform = new byte[] { (byte)transformId };
-                var reverseTransform = new byte[] { (byte)transform.InverseId };
+                var profile = InputProfiler.CreateInputProfile(name: transform.Name,
+                    sequence: new[] { transformId },
+                    tRs: new byte[] { 1 },
+                    globalRounds: globalRounds
+                );
 
-                // Encrypt timing
                 var sw = Stopwatch.StartNew();
-                var encrypted = localEnv.Crypto.Encrypt(singleTransform, sampleInput);
+                var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, sampleInput);
                 sw.Stop();
-                var encryptTime = sw.Elapsed.TotalMilliseconds / localEnv.Globals.Rounds;
+                var encryptTime = sw.Elapsed.TotalMilliseconds / profile.GlobalRounds;
 
-                // Decrypt timing
                 sw.Restart();
-                var decrypted = localEnv.Crypto.Decrypt(reverseTransform, encrypted);
+                var decrypted = localEnv.Crypto.Decrypt(encrypted);
                 sw.Stop();
-                var decryptTime = sw.Elapsed.TotalMilliseconds / localEnv.Globals.Rounds;
+                var decryptTime = sw.Elapsed.TotalMilliseconds / profile.GlobalRounds;
 
-                var timePerOp = (encryptTime + decryptTime) / 2;
+                var timePerOp = (encryptTime + decryptTime) / 2.0;
                 totalTime += timePerOp;
 
-                var result =
-                    $"Transform: {transform.Name} (Id: {transformId}) | Avg time per op: {timePerOp:F4} ms";
-                results.Add(result);
-                Console.WriteLine(result);
-
-                jsonResults.Add(new { Name = transform.Name, Id = transformId, TimePerOpMs = timePerOp });
+                var result = $"Transform: {transform.Name} (Id: {transformId}) | Avg time per op: {timePerOp:F4} ms";
+                rawResults.Add((result, transform.Name, transformId, timePerOp));
             }
         }
+
+        // ✅ Sort by timePerOp (ascending)
+        var sorted = rawResults.OrderBy(r => r.TimePerOp).ToList();
+
+        // Build sorted output
+        var results = sorted.Select(r => r.Text).ToList();
+        var jsonResults = sorted.Select(r => new { Name = r.Name, Id = r.Id, TimePerOpMs = r.TimePerOp }).ToList();
 
         var totalSummary = $"Total Benchmark Time Across All Transforms: {totalTime:F4} ms";
         results.Add("");
         results.Add(totalSummary);
         Console.WriteLine();
-        Console.WriteLine(totalSummary);
+        foreach (var line in results) Console.WriteLine(line);
 
         // Write to TXT
         var txtPath = "TransformBenchmarkResults.txt";
@@ -4651,49 +4395,62 @@ public static class UtilityHelpers
         }
     }
 
+    private static byte[] SetupStandardBenchmarkEnv(ExecutionEnvironment env)
+    {
+        env.Globals.UpdateSetting("InputType", InputType.Random);
+        env.Globals.UpdateSetting("Rounds", byte.MaxValue);
+
+        // Force re-profiling of input in case InputType changed
+        return env.Globals.Input;
+    }
+
     public static void SetBenchmarkBaselineTime(ExecutionEnvironment localEnv)
     {
-        if (localEnv.Crypto.TransformRegistry.TryGetValue(35, out var transform))
-            localEnv.Globals.BenchmarkBaselineTime = transform.BenchmarkTimeMs;
+        const int AnchorTransform = 35; // MaskedCascadeSubFwdFbTx
+        if (BenchmarkCache.TryGetValue(AnchorTransform, out var baselineTime))
+            localEnv.Globals.BenchmarkBaselineTime = baselineTime;
         else
-            throw new InvalidOperationException("Transform ID 35 not found in TransformRegistry.");
+            throw new InvalidOperationException($"Benchmark time for Anchor Transform ID {AnchorTransform} not found in BenchmarkCache.");
     }
 
-    public static void EstablishCurrentBenchmarkTime(ExecutionEnvironment localEnv)
+    public static Dictionary<int, double> BenchmarkCache = new();
+
+    private static readonly object CacheLock = new();
+
+    public static void LoadBenchmarkCache()
     {
-        const int benchmarkTransformId = 35; // MaskedCascadeSubFwdFbTx
-        var finalTimePerOp = 0.0;
-
-        using (var localStatEnvironment = new LocalEnvironment(localEnv))
+        try
         {
-            localEnv.Globals.UpdateSetting("InputType", InputType.Random);
-            localEnv.Globals.UpdateSetting("Rounds", byte.MaxValue.ToString());
-            var sampleInput = localEnv.Globals.Input;
+            var json = File.ReadAllText("TransformBenchmarkResults.json");
+            var parsed = System.Text.Json.JsonSerializer.Deserialize<List<TransformBenchmark>>(json);
 
-            var singleTransform = new byte[] { (byte)benchmarkTransformId };
-            var transform = localEnv.Crypto.TransformRegistry[benchmarkTransformId];
-            var reverseTransform = new byte[] { (byte)transform.InverseId };
-
-            // Encrypt timing
-            var sw = Stopwatch.StartNew();
-            var encrypted = localEnv.Crypto.Encrypt(singleTransform, sampleInput);
-            sw.Stop();
-            var encryptTime = sw.Elapsed.TotalMilliseconds / localEnv.Globals.Rounds; // Divide by rounds
-
-            // Decrypt timing
-            sw.Restart();
-            var decrypted = localEnv.Crypto.Decrypt(reverseTransform, encrypted);
-            sw.Stop();
-            var decryptTime = sw.Elapsed.TotalMilliseconds / localEnv.Globals.Rounds; // Divide by rounds
-
-            finalTimePerOp = (encryptTime + decryptTime) / 2;
-
-            localEnv.Globals.CurrentBenchmarkTime = finalTimePerOp;
-
-            // Optional validation
-            // Debug.Assert(decrypted.SequenceEqual(sampleInput));
-
-            // Console.WriteLine($"[Benchmark] ID: {benchmarkTransformId} | Encrypt: {encryptTime:F4} ms | Decrypt: {decryptTime:F4} ms | Avg: {finalTimePerOp:F4} ms");
+            BenchmarkCache = parsed!.ToDictionary(x => x.Id, x => x.TimePerOpMs);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Error] Failed to load benchmark cache: {ex.Message}");
+            throw; // Fail loudly since benchmarks are required!
         }
     }
+
+    public static void FlushAndReloadBenchmarkCache()
+    {
+        lock (CacheLock)
+        {
+            // Clear existing cache
+            BenchmarkCache!.Clear();
+
+            // Reload benchmark data from disk
+            LoadBenchmarkCache();
+        }
+    }
+
+    private class TransformBenchmark
+    {
+        //public string Name { get; set; }
+        public int Id { get; set; }
+        public double TimePerOpMs { get; set; }
+    }
+
+    #endregion Benchmark Stuff
 }

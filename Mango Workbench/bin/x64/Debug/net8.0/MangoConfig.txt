@@ -1,16 +1,16 @@
 ===============
      Munge     
 ===============
-[Timestamp] 05/02/2025 10:54:55 AM
-DataType: Natural
+[Timestamp] 06/03/2025 05:51:52 AM
+DataType: Random
 Rounds: 3
 Mode: Cryptographic
 PassCount: 6
-MaxSequenceLen: 5
-Munge Level: L5
-Metric Scoring: False
-Database: MungeFailDB,-P6-DN-MC-SF.db
+MaxSequenceLen: 2
+Munge Level: L2
+Scoring Mode: Practical
+Database: MungeFailDB,-P6-DR-MC-SP.db
 Database Creation Mode: Read-Only
 Commandline: <none specified>
-MungeFailDB,-P6-DN-MC-SF.db Active
+MungeFailDB,-P6-DR-MC-SP.db Active
 ===============

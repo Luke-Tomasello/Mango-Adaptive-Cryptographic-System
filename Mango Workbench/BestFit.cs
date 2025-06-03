@@ -23,16 +23,18 @@
  */
 
 using Mango.Adaptive;
-using Mango.Analysis;
+using Mango.AnalysisCore;
 using Mango.Cipher;
 using Mango.Reporting;
 using Mango.SQL;
 using Mango.Utilities;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using Mango.Common;
 using static Mango.SQL.SequenceFailSQL.Tools;
 using static Mango.Utilities.UtilityHelpers;
 using static Mango.Utilities.UtilityHelpers.MungeStatePersistence;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace Mango.Workbench;
 
@@ -40,7 +42,7 @@ public partial class Handlers
 {
     #region Handlers
 
-    public static (string, ConsoleColor) RunBTRHandler(ExecutionEnvironment localEnv, List<byte> userSequence)
+    public static (string, ConsoleColor) RunBTRHandler(ExecutionEnvironment localEnv, string[] args, List<byte> userSequence)
     {
         // ✅ Detect core count and compute adaptive exit threshold
         var coreCount = Environment.ProcessorCount;
@@ -51,6 +53,7 @@ public partial class Handlers
         var exitCount = localEnv.Globals.Rounds;
         var coreThreshold = (int)Math.Ceiling(9.0 / 5.0 * 4); // 7 cores should give you max accuracy
 
+        #region Display/Warnings
         // ✅ Display configuration
         var additionalInfo = coreCount < coreThreshold
             ? $"🔹 Optimized for {coreCount} CPU cores.\nPerformance will scale up to {coreThreshold} cores for better results."
@@ -60,6 +63,7 @@ public partial class Handlers
             localEnv,
             "** Best Fit Autotune Configuration **",
             options: HeaderOptions.All,
+            formattedSequence: new SequenceHelper(localEnv.Crypto).FormattedSequence(userSequence.ToArray(), SequenceFormat.Bare),
             additionalInfo: additionalInfo
         );
 
@@ -72,11 +76,11 @@ public partial class Handlers
         if (feedback != "Y") return ("Autotune aborted by user.", ConsoleColor.Red);
 
         // ✅ Detect actual data type from input
-        var detectedType = InputProfiler.GetInputProfile(localEnv.Globals.Input).Name;
+        var detectedType = InputProfiler.GetInputProfile(localEnv.Globals.Input, localEnv.Globals.Mode, localEnv.Globals.ScoringMode).Name;
         var expectedType = localEnv.Globals.InputType.ToString();
 
         // ✅ Ensure detected type matches configured InputType
-        if (!string.Equals(detectedType, expectedType, StringComparison.OrdinalIgnoreCase))
+        if (!BaseNameEquals(detectedType, expectedType))
         {
             ColorConsole.WriteLine(
                 $"<yellow>\n⚠️ Warning: Selected InputType is '{expectedType}', but Mango detected '{detectedType}'.</yellow>");
@@ -85,15 +89,22 @@ public partial class Handlers
             var response = Console.ReadLine()?.Trim().ToUpper();
             if (response != "Y") return ("Autotune aborted due to InputType mismatch.", ConsoleColor.Red);
         }
+        #endregion Display/Warnings
 
         // ✅ Initialize the failure database  
         SequenceFailSQL.OpenDatabase(GetFailDBFilename(localEnv, "BTRFailDB,"), true);
 
+        var paramPack = new ParamPack(functionName: "optimize sequence", args: args);
+
         // ✅ Pass control to RunBestFitAutotuneMT
-        var result = BestFitTransformRoundsCore(localEnv, userSequence, null, exitCount: exitCount);
+        var result = BestFitTransformRoundsCore(localEnv, userSequence, paramPack, exitCount: exitCount);
 
         // ✅ close the failure database  
         SequenceFailSQL.CloseDatabase();
+
+        // Handle the error
+        if (result.IsError)
+            return (result.Message, ConsoleColor.Red);
 
         // ✅ Construct the final output message, ensuring the winning sequence is displayed
         var finalMessage = $"{result.Message}\n🏆 Best Sequence: {result.BestSequence}";
@@ -102,10 +113,15 @@ public partial class Handlers
         return (finalMessage, result.StatusColor);
     }
 
-    public static (string, ConsoleColor) RunMungeHandler(ExecutionEnvironment localEnv, string[] args)
+    public static (string, ConsoleColor) RunMungeHandler(ExecutionEnvironment parentEnv, string[] args)
     {
         try
         {
+            // Create a local environment so that report writers can access accurate settings (e.g., GlobalRounds),
+            // even if the process uses a profile that overrides parent-level values.
+            var localEnv = new ExecutionEnvironment(parentEnv);
+            localEnv.Globals.UpdateSetting("Rounds", localEnv.Globals.GlobalRoundsForType());
+
             // ✅ Extract a list of valid transform IDs from the Transform Registry
             // - Filters out transforms explicitly marked as "ExcludeFromPermutations"
             // - Converts the remaining transform keys to a List<byte> for sequence generation
@@ -139,10 +155,15 @@ public partial class Handlers
         }
     }
 
-    public static (string, ConsoleColor) RunMungeKHandler(ExecutionEnvironment localEnv, string[] args)
+    public static (string, ConsoleColor) RunMungeKHandler(ExecutionEnvironment parentEnv, string[] args)
     {
         try
         {
+            // Create a local environment so that report writers can access accurate settings (e.g., GlobalRounds),
+            // even if the process uses a profile that overrides parent-level values.
+            var localEnv = new ExecutionEnvironment(parentEnv);
+            localEnv.Globals.UpdateSetting("Rounds", localEnv.Globals.GlobalRoundsForType());
+
             // ✅ Extract a list of valid transform IDs from the Transform Registry
             // - Filters out transforms explicitly marked as "ExcludeFromPermutations"
             // - Converts the remaining transform keys to a List<byte> for sequence generation
@@ -155,7 +176,7 @@ public partial class Handlers
             // - Reads the best sequences from L4 Munge results
             // - Extracts the first 4 transforms (ensuring full sequences are taken)
             // - Throws an error if the requested number of contenders or transforms cannot be satisfied
-            var metaPackages = GetTopContendersAsIDs(localEnv, "Contenders,-L4-P6-D?-MC-SF.txt", 1, 2);
+            var metaPackages = GetTopContendersAsIDs(localEnv, "Contenders,-L4-P6-D?-MC-SP.txt", 1, 2);
             using (var localStatEnvironment = new LocalEnvironment(localEnv))
             {
                 localEnv.Globals.MaxSequenceLen = 5;
@@ -194,7 +215,7 @@ public partial class Handlers
                 .ToList();
 
             // Base arguments (excluding -D).  We'll add -D in the loop.
-            string[] baseArgs = { "-L1", "-P0", "-MC", "-SF" };
+            string[] baseArgs = { "-L1", "-P0", "-MC", "-SP" };
 
             // The different -D values we want to try.
             string[] inputTypes = { "S", "N", "C", "R" };
@@ -203,7 +224,7 @@ public partial class Handlers
             var
                 table =
                     new Dictionary<string, List<(List<byte> Sequence, double AggregateScore,
-                        List<CryptoAnalysis.AnalysisResult>
+                        List<CryptoAnalysisCore.AnalysisResult>
                         Metrics)>>();
             ExecutionEnvironment localEnv = null!;
 
@@ -362,8 +383,8 @@ public partial class Handlers
 
         // ✅ Extract function-specific arguments from FunctionParms if available
         var functionName = paramPack.FunctionName;
-        args = parentEnv.Globals.FunctionParms.ContainsKey(functionName)
-            ? parentEnv.Globals.FunctionParms[functionName] // ✅ Use FunctionParms if defined
+        args = parentEnv.Globals.FunctionParms.ContainsKey(functionName!)
+            ? parentEnv.Globals.FunctionParms[functionName!] // ✅ Use FunctionParms if defined
             : args; // ✅ Fallback to default args
 
         // ✅ Retrieve matching Munge files based on resolved arguments
@@ -372,8 +393,8 @@ public partial class Handlers
         if (files.Length == 0)
             return ("❌ No Munge files found matching criteria.", ConsoleColor.Red);
         else if (VerifyMungeFile(files, out var errorMessage, "-S") == false) return (errorMessage, ConsoleColor.Red);
-
-        if (!parentEnv.Globals.ExitJobComplete && !parentEnv.Globals.BatchMode)
+        
+        if (IsInteractiveWorkbench(parentEnv))
         {
             // 📂 Display files selected for batch optimization
             var toProcess = "\n\n🔍 The following files will be processed:\n" +
@@ -390,7 +411,7 @@ public partial class Handlers
         }
 
         // ✅ Log whether FunctionParms was used
-        var argsSource = parentEnv.Globals.FunctionParms.ContainsKey(functionName)
+        var argsSource = parentEnv.Globals.FunctionParms.ContainsKey(functionName!)
             ? "Batch command line"
             : "Interactive command line";
         ColorConsole.WriteLine($"<Yellow>🔍 Searching for Munge files using {argsSource} parameters.</Yellow>");
@@ -455,7 +476,7 @@ public partial class Handlers
                         analysisResults: null,
                         isReversible: true,
                         name: $"{fileDataEntry.FileName} (Contender #{contenderNumber})",
-                        options: HeaderOptions.Mode | HeaderOptions.InputType | HeaderOptions.MetricScoring |
+                        options: HeaderOptions.Mode | HeaderOptions.InputType | HeaderOptions.ScoringMode |
                                  HeaderOptions.PassCount
                     );
 
@@ -564,8 +585,9 @@ public partial class Handlers
             var dbMessage = $"<Green>{GetFailDBFilename(localEnv, "MungeFailDB,")} Active</Green>";
 
             // ✅ Prepare log messages
+            //  We override the rounds for munge since munges uses the preferred rounds for the inputtype
             var title = GetMungeTitle(headerTitle);
-            List<string> block = GetMungeBody(localEnv);
+            List<string> block = GetMungeBody(localEnv, localEnv.Globals.GlobalRoundsForType());
             List<string> tail = GetMungeTail(title);
 
             block.Add(dbMessage);
@@ -647,7 +669,7 @@ public partial class Handlers
                 analysisResults: null,
                 isReversible: true,
                 name: localEnv.Globals.InputType.ToString(),
-                options: HeaderOptions.Mode | HeaderOptions.InputType | HeaderOptions.MetricScoring |
+                options: HeaderOptions.Mode | HeaderOptions.InputType | HeaderOptions.ScoringMode |
                          HeaderOptions.PassCount
             );
 
@@ -746,13 +768,13 @@ public partial class Handlers
     /// ───────────────────────────────────────────────────────────────
     /// CutLists operate as a coarse filter that trims down the transform pool based on 
     /// **historical performance across top sequences** for a given DataType.
-    /// 
+    ///
     /// Each CutList matrix encodes whether a transform appeared in the top 10 sequences 
     /// across prior Munge runs for a specific combination of:
     ///   - DataType (DC, DN, DR, DS)
     ///   - PassCount
     ///   - Munge Level
-    /// 
+    ///
     /// ✅ Pros:
     /// - Eliminates weak performers early, dramatically reducing search space.
     /// - Applies immediately on new Munges—no warmup needed.
@@ -764,21 +786,56 @@ public partial class Handlers
     ///   the top 10 sequences across relevant prior Munges, it will be cut.
     /// - This means that *no historically successful combination* utilized the transform 
     ///   for the given config — not a random exclusion.
-    private static (string, ConsoleColor) MungeCore(ExecutionEnvironment parentEnv, string functionName,
-        IReadOnlyList<byte> validTransformIds, string[] args)
+
+
+    /// 🧩 Supported Command-Line Switches for MungeCore
+    /// ─────────────────────────────────────────────────
+    /// These switches control Munge behavior and filtering. Multiple switches may be combined.
+    ///
+    /// -L<N>
+    ///     Starts Munge at sequence length N (e.g., `-L5` starts at 5-transform sequences, skipping L1–L4).
+    ///
+    /// --restore
+    ///     Resumes Munge from the last saved restore point (if present). Useful for continuing interrupted sessions.
+    ///
+    /// --require-all <id1,id2,...>
+    ///     Ensures that **each generated sequence includes all specified transform IDs** at least once.
+    ///     Example: `--require-all 41,43,45` (for AES SubBytes, ShiftRows, MixColumns)
+    ///
+    /// --no-repeat <id1,id2,...>
+    ///     Prevents any of the listed transform IDs from appearing **more than once** in a sequence.
+    ///     Useful when pairing `--require-all` with AES-style transforms to ensure uniqueness.
+    ///
+    /// --exclude <id1,id2,...>
+    ///     Completely removes the specified transform IDs from consideration. They will not appear in any generated sequence.
+    ///     Accepts comma-separated values and ranges (e.g., `--exclude 5,6,10-15`)
+    ///
+    /// --no-cutlist
+    ///     Disables CutList filtering, allowing all available transforms to be considered regardless of historical performance.
+    ///     Useful for exploratory runs, debugging, or testing new transforms that were previously excluded.
+    ///
+    /// --remove-inverse
+    ///     🚫 Disabled by default: Inverse transform pruning is used to reduce search space and speed up Munge runs.
+    ///     ⚠️ However, this limits the transform space and does prevent discovery of high-quality or symmetric sequences.
+    ///     Inverses often contribute subtle balancing effects (e.g., diffusion reversal, feedback symmetry, round-trip support).
+    ///     While pruning can be useful for test speed, it risks eliminating key pathways in cryptographic optimization.
+    ///     ✅ Recommendation: Only enable for time-constrained test runs, never for god-sequence discovery.
+    ///
+    /// (More filters may be added in future versions. See ParseTransformFilterArgs for implementation.)
+    private static (string, ConsoleColor) MungeCore(ExecutionEnvironment parentEnv, string functionName, IReadOnlyList<byte> validTransformIds, string[] args)
     {
         var loopCounter = 0;
         var startTime = DateTime.UtcNow;
 #if DEBUG
         var nextSnapshotTime = DateTime.UtcNow.AddMinutes(10);
 #else
-            DateTime nextSnapshotTime = DateTime.UtcNow.AddHours(1);
+        DateTime nextSnapshotTime = DateTime.UtcNow.AddHours(1);
 #endif
         parentEnv.CryptoAnalysis.Initialize();
 
         var threadPoolSize = Environment.ProcessorCount; // Number of available cores
         var analysisQueue =
-            new ConcurrentQueue<(List<CryptoAnalysis.AnalysisResult> AnalysisResults, List<byte> Sequence, LogType
+            new ConcurrentQueue<(List<CryptoAnalysisCore.AnalysisResult> AnalysisResults, List<byte> Sequence, LogType
                 LogType, string
                 LogText)>();
 
@@ -795,8 +852,9 @@ public partial class Handlers
             : (int?)null;
 
         // 💾 Check if the user specified "-restore" to resume from a saved state.
-        var restore = args.Contains("-restore");
+        var restore = args.Any(a => a.Equals("-restore", StringComparison.OrdinalIgnoreCase));
         var startLength = 1;
+        var lengthStartTime = DateTime.MinValue;
         MungeStatePersistence.MungeState? restoredState = null;
         if (restore)
         {
@@ -838,6 +896,8 @@ public partial class Handlers
         // ======================================================================
         for (var length = startLength; length <= parentEnv.Globals.MaxSequenceLen; length++)
         {
+            lengthStartTime = DateTime.UtcNow;
+
             // Check if we are skipping this length entirely
             if (skipTo.HasValue && length < skipTo.Value)
             {
@@ -856,26 +916,102 @@ public partial class Handlers
             // full list of transforms to process
             var transforms = validTransformIds.ToList();
 
-            // 🟢 Apply CutList: Reduce transform set based on prior Munge results.
+            #region Filtering Section
+            // 🚫 Disabled by default: Inverse transform pruning is used to reduce search space and speed up Munge runs.
+            // ⚠️ However, this limits the transform space and does prevent discovery of high-quality or symmetric sequences.
+            //    Inverses often contribute subtle balancing effects (e.g., diffusion reversal, feedback symmetry, round-trip support).
+            //    While pruning can be useful for test speed, it risks eliminating key pathways in cryptographic optimization.
+            // ✅ Recommendation: Only enable for time-constrained test runs, never for god-sequence discovery.
+            if (args.Any(a => a.Equals("--remove-inverse", StringComparison.OrdinalIgnoreCase)))
+            {
+                int previous = validTransformIds.Count;
+                transforms = RemoveInverseTransforms(parentEnv.Crypto, transforms);
+                int removed = previous - transforms.Count;
+
+                ColorConsole.WriteLine($"⚙️ <yellow>Removed {removed} inverse transform{(removed == 1 ? "" : "s")}</yellow>");
+            }
+
+            // ✂️ Apply CutList: Reduce transform set based on prior Munge results.
             // Filters out low-performing transforms early, minimizing wasteful permutations.
-            transforms = ApplyCutListFiltering(parentEnv, transforms, length);
+            if (!args.Any(a => a.Equals("--no-cutlist", StringComparison.OrdinalIgnoreCase)))
+            {
+                int before = transforms.Count;
+                transforms = ApplyCutListFiltering(parentEnv, transforms, length);
+                int after = transforms.Count;
+                int removed = before - after;
 
-            // 📊 Preprocess: Estimate total time required for this Munge pass (based on sequence count, machine benchmark, input size, and rounds)
-            ColorConsole.WriteLine(
-                $"<Yellow>Calculating time to completion for</Yellow> <Cyan>{transforms.Count}</Cyan> <Yellow>transforms of length</Yellow> <Cyan>{length}</Cyan>...");
-            var totalTime = CalculateTotalMungeTime(parentEnv, transforms, length);
+                ColorConsole.WriteLine($"✂️ <yellow>Cutlist filtering removed {removed} transform{(removed == 1 ? "" : "s")}</yellow>");
+            }
 
-            // Pre-cache this since CountPermutations is cheap and doesn't generate sequences
-            var totalSequencesForLength = CountPermutations(transforms, length);
+            // now remove --exclude. for example --exclude 42,44,46
+            try
+            {
+                if (args.Any(a => a.Equals("--exclude", StringComparison.OrdinalIgnoreCase)))
+                {
+                    int before = transforms.Count;
+                    transforms = RemoveExcluded(args, transforms);
+                    int removed = before - transforms.Count;
 
-            // 🧮 Compute the average estimated time per sequence (in ms):
-            // Total time is divided by the number of sequences of this length.
-            // This provides a baseline for per-sequence time reporting during status updates.
+                    ColorConsole.WriteLine($"🚫 <yellow>Excluded {removed} transform{(removed == 1 ? "" : "s")} via --exclude</yellow>");
+                }
+            }
+            catch (Exception ex)
+            {
+                ColorConsole.WriteLine($"❌ <red>Error processing --exclude: {ex.Message}</red>");
+            }
+
+            // 🧩 Parse any filtering args like --exclude, --require-all, --no-repeat
+            var (excludeList, requireAllList, noRepeatList) = ParseTransformFilterArgs(args, transforms);
+
+            // ✂️ Exclude transforms immediately if --exclude was used
+            if (excludeList is { Count: > 0 })
+            {
+                int before = transforms.Count;
+                transforms = transforms.Where(t => !excludeList.Contains(t)).ToList();
+                int removed = before - transforms.Count;
+
+                ColorConsole.WriteLine($"✂️ <yellow>Excluded {removed} transform{(removed == 1 ? "" : "s")} via --require-exclude</yellow>");
+            }
+
+            // 🚨 Check if sequence length is too short to satisfy required transforms
+            if (length < (requireAllList?.Count ?? 0))
+            {
+                int requiredCount = requireAllList?.Count ?? 0;
+                ColorConsole.WriteLine($"⚠️ <yellow>Sequence length ({length}) is too short to include all required transforms ({requiredCount}).</yellow>");
+                ColorConsole.WriteLine($"🚫 <yellow>No permutations generated.</yellow>");
+                return ("", ConsoleColor.Yellow); // Suppress output
+            }
+            #endregion Filtering Section
+
+            #region Munge Time
+            // 🔁 NEW ESTIMATE (after switches parsed)
+            long totalSequencesForLength = PermutationEngine.CountFilteredPermutations(
+                transforms,
+                length,
+                required: requireAllList,
+                allowWildcardRepeat: true,
+                noRepeat: noRepeatList
+            );
+
+            // Defensive: avoid divide-by-zero if no valid sequences
+            if (totalSequencesForLength == 0)
+            {
+                return ($"⚠️ No valid permutations found for length {length} after filtering.", ConsoleColor.Yellow);
+            }
+
+            var totalTime = PermutationEngine.CalculateTotalMungeTime(
+                parentEnv,
+                transforms,
+                length,
+                required: requireAllList,
+                allowWildcardRepeat: true,
+                noRepeat: noRepeatList);
             var averageTimePerSequence = totalTime / totalSequencesForLength;
+            #endregion Munge Time
 
             // ✅ Generate all possible sequences of the given length using the provided list of transform IDs
             // - Supports both full registry and curated lists, depending on the caller's context
-            var sequences = GeneratePermutations(transforms, length);
+            var sequences = PermutationEngine.GeneratePermutations(transforms, length, required: requireAllList, allowWildcardRepeat: true, noRepeat: noRepeatList);
 
             loopCounter = 0;
             var skippedCount = 0;
@@ -884,6 +1020,15 @@ public partial class Handlers
             LogIfEnabled(parentEnv, DebugFlags.StatusMessage,
                 $"<Green>RunMunge evaluating transformations of length</Green> {length}... " +
                 $"<Yellow>(Estimated time: {estimated:d\\.hh\\:mm\\:ss})</Yellow>");
+
+            // ✅ Shared pool across all threads.
+            // Initialized once per Munge run to reuse ExecutionEnvironment instances,
+            // avoiding redundant CryptoLib/PBKDF2 setup and reducing GC pressure.
+            var envPool = new EnvPool(parentEnv);
+
+            // 🚀 Pre-warm the pool with thread-local environments to eliminate cold-start cost
+            for (int i = 0; i < threadPoolSize; i++)
+                envPool.Return(new ExecutionEnvironment(parentEnv));
 
             using (var semaphore = new SemaphoreSlim(threadPoolSize))
             {
@@ -900,6 +1045,7 @@ public partial class Handlers
                 // =====================================================================
                 foreach (var sequence in sequences)
                 {
+                    #region Resume
                     // 🔄 Resumption Logic:
                     // If resuming from a saved state, we skip all permutations until we match the stored "resume point" sequence.
                     // Once found, we resume processing from that exact sequence onward.
@@ -923,7 +1069,9 @@ public partial class Handlers
                             continue; // Skip until we find resume point
                         }
                     }
+                    #endregion Resume
 
+                    #region Bad Sequence Filter
                     // 🚨 Check if sequence is in the "naughty list" BEFORE spawning a thread.
                     // If it is, we skip execution entirely.
                     if (SequenceFailSQL.IsBadSequence(sequence.ToList(), failureKey))
@@ -931,59 +1079,55 @@ public partial class Handlers
                         skippedCount++;
                         continue;
                     }
+                    #endregion Bad Sequence Filter
 
                     semaphore.Wait(); // Wait for an available thread
 
                     var task = Task.Run(() =>
                     {
+                        // 🔁 Rent a reusable thread-local execution environment.
+                        // This avoids recreating expensive components like CryptoLib and PBKDF2,
+                        // improving performance by ~46% in large Munge runs.
+                        ExecutionEnvironment threadEnv = envPool.Rent();
                         try
                         {
-                            // create a thread environment
-                            var threadEnv = new ExecutionEnvironment(parentEnv);
+                            // 🌱 Create a thread-local sequence helper
                             var threadSeq = new SequenceHelper(threadEnv.Crypto);
 
-                            // Generate reverse sequence
-                            var reverseSequence = GenerateReverseSequence(threadEnv.Crypto, sequence);
+                            // 🎯 Construct an InputProfile from the current sequence and thread-local settings
+                            //  Explicitly sets all Transform Rounds (TRs) to 1 for each transform in the sequence.
+                            //  We ignore threadEnv.Globals.Rounds here since that can be set by the user and munge
+                            //      uses the preferred rounds for the data type
+                            var tRs = Enumerable.Repeat((byte)1, sequence.Length).ToArray();
 
-                            // Apply forward and reverse transformations
-                            var encrypted = threadEnv.Crypto.Encrypt(sequence, threadEnv.Globals.Input);
-                            var payload = threadEnv.Crypto.GetPayloadOnly(encrypted);
+                            InputProfile profile = InputProfiler.CreateInputProfile(name: "munge",
+                                sequence: sequence,
+                                tRs: tRs,
+                                globalRounds: threadEnv.Globals.GlobalRoundsForType()
+                            );
 
-                            var decrypted = threadEnv.Crypto.Decrypt(reverseSequence, encrypted);
+                            double encryptionElapsedTime;
+                            var analysisResults = RunSequenceAndAnalyze(threadEnv, profile,
+                                threadSeq.FormattedSequence(sequence, SequenceFormat.ID | SequenceFormat.TRounds)!, out encryptionElapsedTime!);
 
-                            // Modify a copy of input for Avalanche test and Key Dependency test
-                            var (MangoAvalanchePayload, _, MangoKeyDependencyPayload, _) =
-                                ProcessAvalancheAndKeyDependency(
-                                    threadEnv,
-                                    GlobalsInstance.Password,
-                                    sequence.ToList());
-
-                            // Check reversibility
-                            var isReversible = decrypted.SequenceEqual(threadEnv.Globals.Input);
-
-                            if (isReversible)
+                            if (analysisResults != null)
                             {
-                                var analysisResults = threadEnv.CryptoAnalysis.RunCryptAnalysis(
-                                    payload,
-                                    MangoAvalanchePayload,
-                                    MangoKeyDependencyPayload,
-                                    threadEnv.Globals.Input);
-
-                                // Always enqueue results, sequence, and log text
                                 analysisQueue.Enqueue((analysisResults, sequence.ToList(), LogType.Informational,
                                     $"Reversible sequence found: {threadSeq.FormattedSequence(sequence, SequenceFormat.ID | SequenceFormat.TRounds)}"));
                             }
                             else
                             {
-                                // Queue failure messages with sequence and type
                                 analysisQueue.Enqueue((null, sequence.ToList(), LogType.Error,
                                     $"Sequence failed: {threadSeq.FormattedSequence(sequence, SequenceFormat.ID | SequenceFormat.TRounds)}")!);
                             }
                         }
                         finally
                         {
+                            // ♻️ Return the environment to the shared pool for reuse
+                            envPool.Return(threadEnv);
                             semaphore.Release(); // Release the thread
                         }
+
                     });
 
                     tasks.Add(task);
@@ -1057,11 +1201,14 @@ public partial class Handlers
             parentEnv.CryptoAnalysis.LogToFile(parentEnv, logFileName, parentEnv.Globals.DesiredContenders);
 
             LogIfEnabled(parentEnv, DebugFlags.StatusMessage,
-                $"<Green>Completed length</Green> {length} <Green>in</Green> {DateTime.UtcNow - startTime:g}",
+                $"<Green>Completed length</Green> {length} <Green>in</Green> {DateTime.UtcNow - lengthStartTime:g}",
                 length);
         }
 
-        if (!parentEnv.Globals.ExitJobComplete && !parentEnv.Globals.BatchMode)
+        LogIfEnabled(parentEnv, DebugFlags.StatusMessage,
+            $"<Green>Munge Completed in</Green> {DateTime.UtcNow - startTime:g}");
+
+        if (IsInteractiveWorkbench(parentEnv))
         {
             Console.WriteLine("\nPress any key to return to the main menu...");
             Console.ReadKey();
@@ -1079,7 +1226,7 @@ public partial class Handlers
 
         var threadPoolSize = Environment.ProcessorCount; // Number of available cores
         var analysisQueue =
-            new ConcurrentQueue<(List<CryptoAnalysis.AnalysisResult> AnalysisResults, List<byte> Sequence, LogType
+            new ConcurrentQueue<(List<CryptoAnalysisCore.AnalysisResult> AnalysisResults, List<byte> Sequence, LogType
                 LogType, string
                 LogText)>();
 
@@ -1150,23 +1297,39 @@ public partial class Handlers
                     {
                         try
                         {
-                            // Generate reverse sequence
-                            var reverseSequence = GenerateReverseSequence(localEnv.Crypto, sequence);
+                            // 🎯 Construct an InputProfile from the current sequence and thread-local settings
+                            // Explicitly sets all Transform Rounds (TRs) to 1 for each transform in the sequence.
+                            // We ignore threadEnv.Globals.Rounds here since that can be set by the user and munge
+                            //  uses the preferred rounds for the data type
+                            var tRs = Enumerable.Repeat((byte)1, sequence.Length).ToArray();
 
-                            // Apply forward and reverse transformations
-                            var encrypted = localEnv.Crypto.Encrypt(sequence, localEnv.Globals.Input);
+                            var profile = InputProfiler.CreateInputProfile(name: "munge",
+                                sequence: sequence,
+                                tRs: tRs,
+                                globalRounds: localEnv.Globals.GlobalRoundsForType()
+                            );
+
+                            /*
+                             * Update this code to instead use RunSequenceAndAnalyze
+                             *
+                             */
+                            // 🔐 Encrypt using the profile
+                            var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
                             var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
 
-                            var decrypted = localEnv.Crypto.Decrypt(reverseSequence, encrypted);
+                            // 🔓 Decrypt using header-based metadata (no manual reverseSequence needed)
+                            var decrypted = localEnv.Crypto.Decrypt(encrypted);
 
-                            // Modify a copy of input for Avalanche test and Key Dependency test
+                            // ⚡ Evaluate Avalanche + Key Dependency impact using modified inputs
                             var (MangoAvalanchePayload, _, MangoKeyDependencyPayload, _) =
                                 ProcessAvalancheAndKeyDependency(
-                                    localEnv,
+                                    localEnv.Crypto,
+                                    localEnv.Globals.Input,
                                     GlobalsInstance.Password,
-                                    sequence.ToList());
+                                    profile
+                                );
 
-                            // Check reversibility
+                            // ✅ Reversibility check
                             var isReversible = decrypted!.SequenceEqual(localEnv.Globals.Input);
 
                             if (isReversible)
@@ -1175,15 +1338,16 @@ public partial class Handlers
                                     payload,
                                     MangoAvalanchePayload,
                                     MangoKeyDependencyPayload,
-                                    localEnv.Globals.Input);
+                                    localEnv.Globals.Input
+                                );
 
-                                // Always enqueue results, sequence, and log text
+                                // 📥 Record success with sequence formatting
                                 analysisQueue.Enqueue((analysisResults, sequence.ToList(), LogType.Informational,
                                     $"Reversible sequence found: {new SequenceHelper(localEnv.Crypto).FormattedSequence(sequence, SequenceFormat.ID | SequenceFormat.TRounds)}"));
                             }
                             else
                             {
-                                // Queue failure messages with sequence and type
+                                // ❌ Reversibility failure, queue for inspection
                                 analysisQueue.Enqueue((null, sequence.ToList(), LogType.Error,
                                     $"Sequence failed: {new SequenceHelper(localEnv.Crypto).FormattedSequence(sequence, SequenceFormat.ID | SequenceFormat.TRounds)}")!);
                             }
@@ -1256,9 +1420,9 @@ public partial class Handlers
     {
         var threadPoolSize = Environment.ProcessorCount;
         var analysisQueue =
-            new ConcurrentQueue<(List<CryptoAnalysis.AnalysisResult> AnalysisResults, List<byte> Sequence, LogType
+            new ConcurrentQueue<(List<CryptoAnalysisCore.AnalysisResult> AnalysisResults, List<byte> Sequence, LogType
                 LogType, string LogText)>();
-        var bestQueue = new ConcurrentQueue<(int ThreadID, string Sequence, double Score)>();
+        var bestQueue = new ConcurrentQueue<(int ThreadID, string Sequence, string ScoreDisplay)>();
 
         var analysisLog = new ConcurrentDictionary<int, List<string>>();
         var lastFlushTime = DateTime.UtcNow;
@@ -1267,24 +1431,63 @@ public partial class Handlers
 
         parentEnv.CryptoAnalysis.Initialize();
 
-        Console.WriteLine(
-            // exit count is currently disabled because we suspect we were missing out on some 'better' sequences.
-            //  better to take the time for a full BTR and be sure than to shirt-cycle the process and risk missing something.
-            //$"🚀 Running Best Fit Transform + Convergence Autotune (Multi-Threaded) [ExitCount = {exitCount}]...");
-            $"🚀 Running Best Fit Transform + Convergence Autotune (Multi-Threaded)...");
+        #region Parse CLI args
+
+        // ✅ Extract function-specific arguments from FunctionParms if available
+        var args = parentEnv.Globals.FunctionParms.ContainsKey(paramPack!.FunctionName!)
+            ? parentEnv.Globals.FunctionParms[paramPack!.FunctionName!] // ✅ Use FunctionParms if defined
+            : paramPack.Args; // ✅ Fallback to default args
+
+
+        // Max Global Rounds
+        int maxGlobalRounds;
+        try
+        {   // Use --max-rounds N if specified; otherwise default to 9
+            maxGlobalRounds = ParseForInt(args, "--max-rounds") ?? 9;
+        }
+        catch (Exception ex)
+        {
+            return new BestFitResult(ex.Message);
+        }
+
+        // Initial Global Rounds
+        int initGlobalRounds;
+        try
+        {   // Use --starting-round N if specified; otherwise default to baseline Munge already optimized GlobalRounds for this data type.
+            initGlobalRounds = ParseForInt(args, "--starting-round") ?? parentEnv.Globals.GlobalRoundsForType();
+        }
+        catch (Exception ex)
+        {
+            return new BestFitResult(ex.Message);
+        }
+
+        #endregion Parse CLI args
+
+        Console.WriteLine($"🚀 Running Optimize Sequence [{string.Join(" ", args)}]: Starting round {initGlobalRounds}, Ending round {maxGlobalRounds}...");
 
         if (userSequence.Count == 0)
             return new BestFitResult(
                 "❌ No valid sequences found. Ensure the input sequence is correctly formatted and non-empty.");
 
-        var originalMetrics = TestBestFitSequence(parentEnv, userSequence.ToArray(), "Original (Munge(A)(9))");
+        // Start with known-good baseline: Munge already optimized GlobalRounds for this data type.
+        // TRs are all 1, matching how Munge evaluated the sequence — a safe, consistent starting point.
+        var profile = InputProfiler.CreateInputProfile(name: "btr",
+            sequence: userSequence.ToArray(),
+            tRs: Enumerable.Repeat((byte)1, userSequence.Count).ToArray(),
+            globalRounds: parentEnv.Globals.GlobalRoundsForType()
+        );
+
+        // Show known-good baseline: Munge already optimized GlobalRounds for this data type.
+        double encryptionElapsedTimeOriginal;
+        var originalMetrics = RunSequenceAndAnalyze(parentEnv, profile, $"Original (Munge(A)({profile.GlobalRounds}))", out encryptionElapsedTimeOriginal);
+        AssertWeightsMatchExpectedMode(parentEnv);
+
         if (originalMetrics == null)
             return new BestFitResult("<Red>Original sequence failed reversibility check.</Red>");
+
         var baselineScore =
-            parentEnv.CryptoAnalysis.CalculateAggregateScore(originalMetrics, parentEnv.Globals.UseMetricScoring);
-        var baselineSequence = new SequenceHelper(parentEnv.Crypto).FormattedSequence(
-            paramPack?.ReferenceSequence ?? userSequence.ToArray(),
-            SequenceFormat.ID | SequenceFormat.InferTRounds | SequenceFormat.InferGRounds);
+            parentEnv.CryptoAnalysis.CalculateAggregateScore(originalMetrics, parentEnv.Globals.ScoringMode);
+        string baselineSequence = new SequenceHelper(parentEnv.Crypto).FormattedSequence<string>(profile);
         double bestScore = 0;
         string? bestSequence = null!;
         ColorConsole.WriteLine($"<Cyan>Baseline Sequence: {baselineSequence}</Cyan>");
@@ -1295,11 +1498,14 @@ public partial class Handlers
         // ✅ Define `currentSequence` here to mirror BTRR’s model, ensuring consistency.
         var currentSequence = userSequence;
 
-        //// ✅ EARLY EXIT: Skip bad sequences BEFORE allocating `SemaphoreSlim`
-        //if (HasFailedAtAnyGlobalRound(parentEnv, currentSequence, exitCount, MaxGlobalRounds))
-        //{
-        //    return new BestFitResult(bestSequence, "(skipped)");
-        //}
+        // ✅ Shared pool across all threads.
+        // Initialized once per Munge run to reuse ExecutionEnvironment instances,
+        // avoiding redundant CryptoLib/PBKDF2 setup and reducing GC pressure.
+        var envPool = new EnvPool(parentEnv);
+
+        // 🚀 Pre-warm the pool with thread-local environments to eliminate cold-start cost
+        for (int i = 0; i < threadPoolSize; i++)
+            envPool.Return(new ExecutionEnvironment(parentEnv));
 
         using (var semaphore = new SemaphoreSlim(threadPoolSize))
         {
@@ -1310,42 +1516,47 @@ public partial class Handlers
                 semaphore.Wait();
                 var task = Task.Run(() =>
                 {
+                    // 🔁 Rent a reusable thread-local execution environment.
+                    // This avoids recreating expensive components like CryptoLib and PBKDF2,
+                    // improving performance by ~46% in large Munge runs.
+                    ExecutionEnvironment threadEnv = envPool.Rent();
                     try
                     {
                         var threadID = Thread.CurrentThread.ManagedThreadId;
-                        var threadEnv = new ExecutionEnvironment(parentEnv);
                         var threadSeq = new SequenceHelper(threadEnv.Crypto);
-                        var threadRsm = new StateManager(threadEnv);
-                        var MaxGlobalRounds = threadRsm.GlobalRounds;
                         double threadBestScore = 0; // 🔹 Each thread tracks its own best score
                         var noProgressCounter = 0; // 🔹 Each thread manages its own progress counter
 
-                        // ✅ Move rounds management inside the thread
-                        threadRsm.PushAllTransformRounds();
-                        var failureKey = GenerateFailureKey(threadEnv, "standard", exitCount, MaxGlobalRounds);
+                        //// ✅ generate failure key (currently unused)
+                        var failureKey = GenerateFailureKey(threadEnv, "standard", exitCount, maxGlobalRounds);
                         try
                         {
-                            for (threadRsm.GlobalRounds = 1;
-                                 threadRsm.GlobalRounds <= MaxGlobalRounds;
-                                 threadRsm.IncGlobalRound())
+                            for (int gr = initGlobalRounds; gr <= maxGlobalRounds; gr++)
                             {
-                                SetTransformRounds(threadEnv.Crypto, userSequence, roundConfig);
-
                                 // ✅ Execute the sequence once per global round
                                 Interlocked.Increment(ref processedSequences);
-                                var metrics = TestBestFitSequence(threadEnv, currentSequence.ToArray(),
-                                    $"Test (GR: {threadRsm.GlobalRounds})", roundConfig);
+
+                                var profile = InputProfiler.CreateInputProfile(name: "btr",
+                                    sequence: currentSequence.ToArray(),
+                                    tRs: roundConfig.ToArray(),
+                                    globalRounds: gr
+                                );
+
+                                double encryptionElapsedTime;
+                                var metrics = RunSequenceAndAnalyze(threadEnv, profile, $"Test (GR: {profile.GlobalRounds})", out encryptionElapsedTime);
+
                                 if (metrics != null)
                                 {
+                                    AssertWeightsMatchExpectedMode(parentEnv);
                                     var score = parentEnv.CryptoAnalysis.CalculateAggregateScore(metrics,
-                                        parentEnv.Globals.UseMetricScoring);
+                                        parentEnv.Globals.ScoringMode);
 
                                     if (processedSequences % 1000 == 0)
                                     {
                                         var compactConfig =
                                             $"[{string.Concat(roundConfig.Select(b => b.ToString("X2")))}]";
                                         var logEntry =
-                                            $"[TID: {threadID:D2}] [RC: {compactConfig}] Evaluating {threadSeq.FormattedSequence(currentSequence.ToArray(), SequenceFormat.ID | SequenceFormat.InferTRounds | SequenceFormat.InferGRounds)} (GlobalRounds: {threadRsm.GlobalRounds})...";
+                                            $"[TID: {threadID:D2}] [RC: {compactConfig}] Evaluating {threadSeq.FormattedSequence<string>(profile)}...";
                                         analysisLog.AddOrUpdate(threadID, _ => new List<string> { logEntry },
                                             (_, logList) =>
                                             {
@@ -1404,11 +1615,8 @@ public partial class Handlers
                                             if (score > highWaterMark)
                                             {
                                                 highWaterMark = score;
-                                                bestSequence = threadSeq.FormattedSequence(
-                                                    currentSequence.ToArray(),
-                                                    SequenceFormat.ID | SequenceFormat.InferTRounds |
-                                                    SequenceFormat.InferGRounds);
-                                                bestQueue.Enqueue((threadID, bestSequence, score)!);
+                                                bestSequence = threadSeq.FormattedSequence<string>(profile);
+                                                bestQueue.Enqueue((threadID, bestSequence, FormatScoreWithPassRatio(score, metrics, encryptionElapsedTime))!);
                                                 FlushBestList(bestQueue);
 
                                                 if (score > bestScore) bestScore = score;
@@ -1428,16 +1636,16 @@ public partial class Handlers
                                     }
                                 }
 
-                                /// ✅ Status updates must be handled inside worker threads
-                                /// -------------------------------------------------------
-                                /// Unlike BestFitTransformRoundsCore, the main thread in this function
-                                /// reaches `Task.WaitAll()` immediately after launching tasks and does not
-                                /// execute further until all threads complete. This means the log update
-                                /// condition would never be reached outside the threads.
-                                ///
-                                /// To ensure periodic updates still happen, we move the log check inside
-                                /// the worker thread, allowing each thread to handle its own logging
-                                /// while processing sequences.
+                                // ✅ Status updates must be handled inside worker threads
+                                // -------------------------------------------------------
+                                // Unlike BestFitTransformRoundsCore, the main thread in this function
+                                // reaches `Task.WaitAll()` immediately after launching tasks and does not
+                                // execute further until all threads complete.This means the log update
+                                // condition would never be reached outside the threads.
+                                //
+                                // To ensure periodic updates still happen, we move the log check inside
+                                // the worker thread, allowing each thread to handle its own logging
+                                // while processing sequences.
                                 if ((DateTime.UtcNow - lastFlushTime).TotalSeconds >= flushIntervalSeconds)
                                     lock (_consoleLock)
                                     {
@@ -1461,70 +1669,18 @@ public partial class Handlers
 
                                         FlushAnalysisLog(analysisLog);
                                     }
-
-                                ResetTransformRounds(threadEnv.Crypto, userSequence.ToArray());
-
-                                //if (threadEnv.Globals.CreateBTRFailDB)
-                                //    CheckRecordFail(threadEnv, metrics, userSequence, failureKey); // ✅ Use PassCount to validate failure
-
-                                //if (!currentRoundImproved)
-                                //{
-                                //    return; // ✅ Now safely exits only after handling bad sequences
-                                //}
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            lock (_consoleLock) // 🔹 Prevent garbled multi-threaded output
-                            {
-                                ColorConsole.WriteLine(
-                                    $"<Red>[Thread {threadID}] ERROR: {ex.GetType().Name} - {ex.Message}</Red>");
-                                ColorConsole.WriteLine($"<Red>Stack Trace:</Red> {ex.StackTrace}");
-                                ColorConsole.WriteLine("\n<Yellow>Press any key to continue...</Yellow>");
-                                Console.ReadKey();
                             }
                         }
                         finally
                         {
-                            threadRsm.PopAllTransformRounds();
+                            // ♻️ Return the environment to the shared pool for reuse
+                            envPool.Return(threadEnv);
                             semaphore.Release(); // ✅ Release the semaphore here!
-                        }
-                        /// ✅ **Final safeguard: Ensure bad sequences are recorded if no improvements occurred**
-                        /// ----------------------------------------------------------------------------------
-                        /// **How we get here:**
-                        /// - This block executes **only if** `anyRoundImproved` remains `false`, meaning:
-                        ///   1️⃣ The sequence **never improved at any round**
-                        ///   2️⃣ It either **exited early due to stagnation** (`exitCount` reached) or 
-                        ///   3️⃣ It **ran through all `MaxGlobalRounds` without improvement**.
-                        ///
-                        /// **What we are doing:**
-                        /// - This ensures that sequences **which never passed the threshold** get recorded 
-                        ///   in the failure database.
-                        /// - Since `ExitCount` is part of `failureKey`, recording the sequence **does not**
-                        ///   prevent other configurations (with different `exitCount` values) from evaluating it.
-                        ///
-                        /// **Why this is safe:**
-                        /// - If a sequence showed **any improvement** during testing, `anyRoundImproved`
-                        ///   would have been set to `true`, preventing it from being marked as a failure.
-                        /// - This ensures we are **only failing sequences that truly never had potential**.
-                        //if (!anyRoundImproved)
-                        //{
-                        //    if (threadEnv.Globals.CreateBTRFailDB)
-                        //        CheckRecordFail(threadEnv, null, userSequence, failureKey);
-                        //}
-                    }
-                    catch (Exception ex)
-                    {
-                        lock (_consoleLock) // 🔹 Prevent garbled multi-threaded output
-                        {
-                            ColorConsole.WriteLine($"<Red> ERROR: {ex.GetType().Name} - {ex.Message}</Red>");
-                            ColorConsole.WriteLine($"<Red>Stack Trace:</Red> {ex.StackTrace}");
-                            ColorConsole.WriteLine("\n<Yellow>Press any key to continue...</Yellow>");
-                            Console.ReadKey();
                         }
                     }
                     finally
                     {
+                        
                     }
                 });
 
@@ -1551,6 +1707,24 @@ public partial class Handlers
         var btrElapsed = DateTime.UtcNow - btrStartTime;
         ColorConsole.WriteLine($"\n<green>🏁 Best Fit Autotune completed in: {btrElapsed:c}</green>\n");
 
+        if (IsInteractiveWorkbench(parentEnv))
+        {
+            if (bestScore > baselineScore)
+            {
+                ColorConsole.WriteLine(
+                    $"<Green> 🏆 Best Sequence:</Green> {bestSequence} <Cyan>({bestScore:F4})</Cyan>");
+                if (AskYN("Do you wish to make this the current sequence?"))
+                    MangoConsole.CommandStack.Push("$" + bestSequence);
+            }
+            else
+            {
+                ColorConsole.WriteLine(
+                    $"<DarkGray>⏩ No improvement:</DarkGray> {bestSequence} <Gray>({bestScore:F4})</Gray>");
+
+                PressAnyKey();
+            }
+        }
+
         // 🎯 Final Evaluation:
         // - If BTR MT finds a better sequence, it returns the optimized result.
         // - If no improvement was found, the original Munge(A)(9) sequence remains dominant.
@@ -1563,9 +1737,9 @@ public partial class Handlers
     {
         var threadPoolSize = Environment.ProcessorCount;
         var analysisQueue =
-            new ConcurrentQueue<(List<CryptoAnalysis.AnalysisResult> AnalysisResults, List<byte> Sequence, LogType
+            new ConcurrentQueue<(List<CryptoAnalysisCore.AnalysisResult> AnalysisResults, List<byte> Sequence, LogType
                 LogType, string LogText)>();
-        var bestQueue = new ConcurrentQueue<(int ThreadID, string Sequence, double Score)>();
+        var bestQueue = new ConcurrentQueue<(int ThreadID, string Sequence, string ScoreDisplay)>();
         var analysisLog = new ConcurrentDictionary<int, List<string>>();
         var lastFlushTime = DateTime.UtcNow;
         const int flushIntervalSeconds = 120;
@@ -1580,14 +1754,24 @@ public partial class Handlers
             2);
         Console.WriteLine($"🔍 Total Sequences to Evaluate: {totalPermutations}");
 
+        // Start with known-good baseline: Munge already optimized GlobalRounds for this data type.
+        int globalRounds = parentEnv.Globals.GlobalRoundsForType();
+        var profile = InputProfiler.CreateInputProfile(name: "btr",
+            sequence: paramPack.ReferenceSequence ?? userSequence.ToArray(),
+            tRs: Enumerable.Repeat((byte)1, userSequence.Count).ToArray(),
+            globalRounds: globalRounds
+        );
 
-        var originalMetrics = TestBestFitSequence(parentEnv, paramPack.ReferenceSequence ?? userSequence.ToArray(),
-            "Original (Munge(A)(9))");
+        double encryptionElapsedTimeOriginal;
+        var originalMetrics = RunSequenceAndAnalyze(parentEnv, profile, $"Original (Munge(A)({globalRounds}))", out encryptionElapsedTimeOriginal);
+
         if (originalMetrics == null)
             return new BestFitResult("<Red>Original sequence failed reversibility check.</Red>");
 
+        AssertWeightsMatchExpectedMode(parentEnv);
+
         var baselineScore =
-            parentEnv.CryptoAnalysis.CalculateAggregateScore(originalMetrics, parentEnv.Globals.UseMetricScoring);
+            parentEnv.CryptoAnalysis.CalculateAggregateScore(originalMetrics, parentEnv.Globals.ScoringMode);
         var baselineSequence = new SequenceHelper(parentEnv.Crypto).FormattedSequence(
             paramPack.ReferenceSequence ?? userSequence.ToArray(),
             SequenceFormat.ID | SequenceFormat.InferTRounds | SequenceFormat.InferGRounds);
@@ -1633,7 +1817,7 @@ public partial class Handlers
                             throw new InvalidOperationException(
                                 $"🚨 ERROR: Generated sequence has {currentSequence.Count} transforms (limit is 5)! This should NEVER happen!");
 
-                        threadRsm.PushAllTransformRounds();
+                        //threadRsm.PushAllTransformRounds();
                         var failureKey = GenerateFailureKey(threadEnv, "standard", exitCount, MaxGlobalRounds);
                         try
                         {
@@ -1642,15 +1826,27 @@ public partial class Handlers
                                  threadRsm.GlobalRounds <= MaxGlobalRounds;
                                  threadRsm.IncGlobalRound())
                             {
-                                SetTransformRounds(threadEnv.Crypto, currentSequence, currentRoundConfig);
+                                //SetTransformRounds(threadEnv.Crypto, currentSequence, currentRoundConfig);
                                 Interlocked.Increment(ref processedSequences);
-                                var metrics = TestBestFitSequence(threadEnv, currentSequence.ToArray(),
-                                    $"Test (GR: {threadRsm.GlobalRounds})", currentRoundConfig);
+
+                                //var metrics = TestBestFitSequence(threadEnv, currentSequence.ToArray(),
+                                //    $"Test (GR: {threadRsm.GlobalRounds})", currentRoundConfig);
+
+                                var profile = InputProfiler.CreateInputProfile(name: "btr",
+                                    sequence: currentSequence.ToArray(),
+                                    tRs: currentRoundConfig.ToArray(),
+                                    globalRounds: threadRsm.GlobalRounds
+                                );
+
+                                double encryptionElapsedTime;
+                                var metrics = RunSequenceAndAnalyze(threadEnv, profile, $"Test (GR: {profile.GlobalRounds})", out encryptionElapsedTime);
 
                                 if (metrics != null)
                                 {
+                                    AssertWeightsMatchExpectedMode(parentEnv);
+
                                     var score = parentEnv.CryptoAnalysis.CalculateAggregateScore(metrics,
-                                        parentEnv.Globals.UseMetricScoring);
+                                        parentEnv.Globals.ScoringMode);
 
                                     if (processedSequences % 1000 == 0)
                                     {
@@ -1681,7 +1877,7 @@ public partial class Handlers
                                                 bestSequence = threadSeq.FormattedSequence(currentSequence.ToArray(),
                                                     SequenceFormat.ID | SequenceFormat.InferTRounds |
                                                     SequenceFormat.InferGRounds);
-                                                bestQueue.Enqueue((threadID, bestSequence, score)!);
+                                                bestQueue.Enqueue((threadID, bestSequence, FormatScoreWithPassRatio(score, metrics, encryptionElapsedTime))!);
                                                 FlushBestList(bestQueue);
 
                                                 if (score > bestScore) bestScore = score;
@@ -1723,7 +1919,7 @@ public partial class Handlers
                                         FlushAnalysisLog(analysisLog);
                                     }
 
-                                ResetTransformRounds(threadEnv.Crypto, currentSequence.ToArray());
+                                //ResetTransformRounds(threadEnv.Crypto, currentSequence.ToArray());
                             } // End GlobalRounds loop
 
                         permutation_done:; // 7. Corrected goto label
@@ -1741,7 +1937,7 @@ public partial class Handlers
                         }
                         finally
                         {
-                            threadRsm.PopAllTransformRounds();
+                            //threadRsm.PopAllTransformRounds();
                             semaphore.Release(); // ✅ Release the semaphore here!
                         }
 
@@ -1776,9 +1972,181 @@ public partial class Handlers
     #endregion Best Fit Cores
 
     #region TOOLS
+    public static bool BaseNameEquals(string a, string b)
+    {
+        static string BaseName(string s)
+        {
+            var dotIndex = s.IndexOf('.');
+            return dotIndex >= 0 ? s.Substring(0, dotIndex) : s;
+        }
+
+        return string.Equals(BaseName(a), BaseName(b), StringComparison.OrdinalIgnoreCase);
+    }
+    public static List<byte> RemoveInverseTransforms(CryptoLib cryptoLib, List<byte> transforms)
+    {
+        var registry = cryptoLib.TransformRegistry;
+        var seen = new HashSet<byte>();
+        var keep = new List<byte>();
+
+        foreach (var id in transforms)
+        {
+            if (!registry.TryGetValue(id, out var transform))
+                continue;
+
+            // Skip PassthroughTx or excluded
+            if (transform.ExcludeFromPermutations)
+                continue;
+
+            // Avoid processing the same ID twice
+            if (seen.Contains(id))
+                continue;
+
+            var inverse = (byte)transform.InverseId;
+
+            if (inverse == id)
+            {
+                // Self-inverse — always keep
+                keep.Add(id);
+            }
+            else if (!seen.Contains(inverse))
+            {
+                // Only keep the lower of the pair (arbitrary but stable)
+                var toKeep = Math.Min(id, inverse);
+                keep.Add(toKeep);
+
+                // Mark both as seen so we don't re-add later
+                seen.Add(id);
+                seen.Add(inverse);
+            }
+        }
+
+        return keep;
+    }
+
+    private static List<byte> RemoveExcluded(string[] args, List<byte> transformPool)
+    {
+        int idx = Array.FindIndex(args, a => a.Equals("--exclude", StringComparison.OrdinalIgnoreCase));
+        if (idx == -1 || idx + 1 >= args.Length)
+            throw new ArgumentException("Missing value for --exclude.");
+
+        var excludeArg = args[idx + 1];
+        var excluded = excludeArg
+            .Split(',')
+            .Select(s => byte.TryParse(s.Trim(), out var b) ? b : throw new ArgumentException($"Invalid byte: '{s}'"))
+            .ToList();
+
+        // Remove from transform pool
+        return transformPool.Except(excluded).ToList();
+    }
+
+    /*
+        1. --require-all
+        Ensure all of these transform IDs are present once in each sequence (in any position).
+
+        perl
+        Copy
+        Edit
+        --require-all 43,41,45      # AesSubBytes, ShiftRows, MixColumns
+        2. --length
+        Set total sequence length.
+
+        perl
+        Copy
+        Edit
+        --length 5                  # Try all sequences of length 5
+        3. --exclude
+        Prevent specific transform IDs from appearing at all.
+
+        kotlin
+        Copy
+        Edit
+        --exclude 40                # ChunkedFbTx is out
+
+     */
+    public static (List<byte>? excludeList, List<byte>? requireAllList, List<byte>? noRepeatList)
+    ParseTransformFilterArgs(string[] argv, List<byte> availableTransformIds)
+    {
+        List<byte>? excludeList = null;
+        List<byte>? requireAllList = null;
+        List<byte>? noRepeatList = null;
+
+        for (int i = 0; i < argv.Length; i++)
+        {
+            string flag = argv[i];
+
+            // These flags all require a next value
+            if (flag == "--exclude" || flag == "--require-all" || flag == "--no-repeat")
+            {
+                if (i + 1 >= argv.Length)
+                    throw new ArgumentException($"Missing argument for {flag}.");
+
+                string value = argv[++i];
+
+                switch (flag)
+                {
+                    case "--exclude":
+                        excludeList = FilterTransformIdList(availableTransformIds, value);
+                        if (excludeList == null)
+                            throw new ArgumentException("Invalid format for --exclude. Use comma-separated IDs or ranges (e.g., 5,7-9).");
+                        break;
+
+                    case "--require-all":
+                        requireAllList = FilterTransformIdList(availableTransformIds, value);
+                        if (requireAllList == null)
+                            throw new ArgumentException("Invalid format for --require-all. Use comma-separated IDs or ranges.");
+                        break;
+
+                    case "--no-repeat":
+                        noRepeatList = FilterTransformIdList(availableTransformIds, value);
+                        if (noRepeatList == null)
+                            throw new ArgumentException("Invalid format for --no-repeat. Use comma-separated IDs or ranges.");
+                        break;
+                }
+            }
+            else
+            {
+                // Unknown arg — ignore safely and continue
+                continue;
+            }
+        }
+
+        return (excludeList, requireAllList, noRepeatList);
+    }
+
+    private static List<byte>? FilterTransformIdList(List<byte> transforms, string filter)
+    {
+        var allowed = new HashSet<byte>();
+
+        foreach (var part in filter.Split(','))
+        {
+            if (part.Contains('-'))
+            {
+                var bounds = part.Split('-');
+                if (bounds.Length != 2 ||
+                    !byte.TryParse(bounds[0], out byte start) ||
+                    !byte.TryParse(bounds[1], out byte end))
+                    return null;
+
+                if (start > end) return null;
+
+                for (byte i = start; i <= end; i++)
+                    allowed.Add(i);
+            }
+            else if (byte.TryParse(part, out byte id))
+            {
+                allowed.Add(id);
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        return transforms.Where(t => allowed.Contains(t)).ToList();
+    }
 
     private static void FlushAnalysisQueue(ExecutionEnvironment localEnv,
-        ConcurrentQueue<(List<CryptoAnalysis.AnalysisResult>, List<byte>, LogType, string)> queue, string failurekey)
+        ConcurrentQueue<(List<CryptoAnalysisCore.AnalysisResult>, List<byte>, LogType, string)> queue, string failurekey)
     {
         while (queue.TryDequeue(out var item))
         {
@@ -1792,6 +2160,7 @@ public partial class Handlers
                 if (!localEnv.Globals.Quiet && logType == LogType.Informational)
                 {
                     Console.WriteLine(logText);
+
                     ReportHelper.Report(ReportHelper.ReportFormat.SCR,
                         localEnv.CryptoAnalysis.CryptAnalysisReport(localEnv.Crypto, analysisResults));
                 }
@@ -1832,160 +2201,44 @@ public partial class Handlers
             }
         }
     }
-
-    // ✅ Main function: Accepts byte[] sequence + roundConfig
-    private static List<CryptoAnalysis.AnalysisResult>? TestBestFitSequence(ExecutionEnvironment localEnv,
-        byte[] sequence, string label, List<byte> restoreRounds)
+    public static List<CryptoAnalysisCore.AnalysisResult>? RunSequenceAndAnalyze(
+        ExecutionEnvironment localEnv, InputProfile profile, string label, out double encryptionElapsedTime)
     {
-        try
+        var sw = Stopwatch.StartNew();
+        // 🔐 Encrypt using baked profile
+        var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+        sw.Stop();
+        encryptionElapsedTime = sw.Elapsed.TotalMilliseconds;
+
+        // 🔄 Reverse sequence is inferred statelessly (no state mutation)
+        var decrypted = localEnv.Crypto.Decrypt(encrypted);
+
+        if (!decrypted.SequenceEqual(localEnv.Globals.Input))
         {
-            // Apply forward transformations
-            byte[] encrypted = null!;
-            encrypted = localEnv.Crypto.Encrypt(sequence, localEnv.Globals.Input);
-
-            // Generate reverse sequence
-            byte[] reverseSequence = null!;
-            reverseSequence = GenerateReverseSequence(localEnv.Crypto, sequence);
-
-            // ✅ Reverse the transform rounds before decryption
-            ReverseTransformRounds(localEnv.Crypto, sequence!.ToList(), reverseSequence!.ToList());
-
-            // Apply reverse transformations
-            byte[] decrypted = null!;
-            decrypted = localEnv.Crypto.Decrypt(reverseSequence, encrypted);
-
-            // ✅ Check reversibility
-            if (!decrypted!.SequenceEqual(localEnv.Globals.Input))
+            lock (_consoleLock)
             {
-                lock (_consoleLock)
-                {
-                    ColorConsole.WriteLine($"<Red>{label} Failed Reversibility</Red>");
-                }
-
-                return null;
+                ColorConsole.WriteLine($"<Red>{label} Failed Reversibility</Red>");
             }
 
-            // Extract payload for analysis
-            byte[] payload = null!;
-            payload = localEnv.Crypto.GetPayloadOnly(encrypted);
-
-            // Modify a copy of input for Avalanche test and Key Dependency test
-            var (MangoAvalanchePayload, _, MangoKeyDependencyPayload, _) =
-                ProcessAvalancheAndKeyDependency(
-                    localEnv,
-                    GlobalsInstance.Password,
-                    sequence.ToList(),
-                    false); // ✅ No AES processing needed
-
-            // Run cryptanalysis with correct Avalanche and Key Dependency inputs
-            return localEnv.CryptoAnalysis.RunCryptAnalysis(
-                payload,
-                MangoAvalanchePayload,
-                MangoKeyDependencyPayload,
-                localEnv.Globals.Input);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine(
-                $"Error during {label} testing: {ex.Message}\nSequence: {Convert.ToHexString(sequence!)}");
             return null;
         }
-        finally
-        {
-            // ✅ Restore the original state using roundConfig directly
-            SetTransformRounds(localEnv.Crypto, sequence!.ToList(), restoreRounds);
-        }
+
+        var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
+        var (avalanche, _, keydep, _) = ProcessAvalancheAndKeyDependency(
+            localEnv.Crypto, localEnv.Globals.Input, GlobalsInstance.Password, profile);
+
+        return localEnv.CryptoAnalysis.RunCryptAnalysis(payload, avalanche, keydep, localEnv.Globals.Input);
     }
 
-    // ✅ Overload 2: Accepts byte[] sequence but needs explicit roundConfig
-    private static List<CryptoAnalysis.AnalysisResult>? TestBestFitSequence(ExecutionEnvironment localEnv,
-        byte[] sequence, string label)
-    {
-        // ✅ Default roundConfig to all 1s, matching the sequence length
-        var roundConfig = Enumerable.Repeat((byte)1, sequence!.Length).ToList();
-
-        // ✅ Call the main overload with the default rounds
-        return TestBestFitSequence(localEnv, sequence, label, roundConfig);
-    }
-
-    private static void ReverseTransformRounds(CryptoLib? cryptoLib, List<byte> sequence, List<byte> reverseSequence)
-    {
-        // ✅ Step 1: Store forward round mappings BEFORE modifying anything
-        var forwardRoundMap = new Dictionary<byte, List<byte>>();
-
-        foreach (var transformId in sequence)
-        {
-            if (!forwardRoundMap.ContainsKey(transformId))
-                forwardRoundMap[transformId] = new List<byte>();
-
-            forwardRoundMap[transformId].Add(cryptoLib!.TransformRegistry[transformId].Rounds);
-        }
-
-        // ✅ Step 2: Apply the correct round mappings to the reverse sequence
-        for (var i = 0; i < reverseSequence.Count; i++)
-        {
-            var reverseId = reverseSequence[i]; // Get the reverse transform ID
-            var forwardId = sequence[sequence.Count - 1 - i]; // Get the corresponding forward transform ID
-
-            if (cryptoLib!.TransformRegistry.TryGetValue(forwardId, out var forwardTransform) &&
-                cryptoLib!.TransformRegistry.TryGetValue(reverseId, out var reverseTransform))
-                if (forwardRoundMap.TryGetValue(forwardId, out var roundList) && roundList.Count > 0)
-                {
-                    reverseTransform.Rounds = roundList.First(); // ✅ Apply the first stored round value
-                    roundList.RemoveAt(0); // Remove used round to maintain order consistency
-                }
-        }
-    }
-
-    private static void SetTransformRounds(CryptoLib? cryptoLib, List<byte> sequence, List<byte> roundConfig)
-    {
-        for (var i = 0; i < sequence.Count; i++)
-            if (cryptoLib!.TransformRegistry.TryGetValue(sequence[i], out var transformInfo))
-                transformInfo.Rounds = roundConfig[i]; // Assign dynamic rounds
-            else
-                throw new KeyNotFoundException($"Transform ID {sequence[i]} not found in registry.");
-    }
-
-    private static void ResetTransformRounds(CryptoLib? cryptoLib, byte[] sequence)
-    {
-        foreach (var transformId in sequence)
-            if (cryptoLib!.TransformRegistry.TryGetValue(transformId, out var transformInfo))
-                transformInfo.Rounds = 1; // 🔹 Reset to default rounds
-    }
-    //private static bool HasFailedAtAnyGlobalRound(ExecutionEnvironment localEnv, List<byte> sequence, int exitCount, int maxGlobalRounds)
-    //{
-    //    for (int round = 1; round <= maxGlobalRounds; round++)
-    //    {
-    //        // 🔵 BTR Context: Optimize per-transform rounds (TR) up to MaxGlobalRounds ceiling.
-    //        string failureKey = GenerateFailureKey(localEnv, "standard", exitCount, MaxGlobalRounds, round);
-
-    //        if (SequenceFailSQL.IsBadSequence(sequence, failureKey))
-    //            return true; // ✅ Found a failure, no need to check further
-    //    }
-    //    return false; // ✅ Sequence is clean, proceed with processing
-    //}
-    // ✅ **Streaming-Friendly Function for Pre-checking Valid Rounds**
-    //private static bool HasAnyValidRound(ExecutionEnvironment localEnv, IEnumerable<byte[]> permutations, int exitCount, int maxGlobalRounds)
-    //{
-    //    foreach (var permutation in permutations) // ✅ Iterates lazily (does not materialize full list)
-    //    {
-    //        foreach (var roundConfig in GenerateRoundCombinations(permutation.Length)) // ✅ Use permutation.Length
-    //        {
-    //            if (!HasFailedAtAnyGlobalRound(localEnv, permutation.ToList(), exitCount, maxGlobalRounds)) // ✅ Pass permutation as byte[]
-    //            {
-    //                return true; // ✅ Early exit if a valid round is found
-    //            }
-    //        }
-    //    }
-    //    return false; // ❌ No valid rounds found
-    //}
-    private static void FlushBestList(ConcurrentQueue<(int ThreadID, string Sequence, double Score)> bestQueue)
+    private static void FlushBestList(ConcurrentQueue<(int ThreadID, string Sequence, string ScoreDisplay)> bestQueue)
     {
         lock (_consoleLock)
         {
             while (bestQueue.TryDequeue(out var best))
+            {
                 ColorConsole.WriteLine(
-                    $"<Green>[Thread {best.ThreadID}] 🏆 New Best:</Green> {best.Sequence} <Cyan>({best.Score:F4})</Cyan>");
+                    $"<Green>[Thread {best.ThreadID}] 🏆 New Best:</Green> {best.Sequence} <Cyan>{best.ScoreDisplay}</Cyan>");
+            }
         }
     }
 
@@ -2127,19 +2380,31 @@ public partial class Handlers
             {
                 var sequence = seq.GetIDs(new List<string> { transform });
 
-                var encrypted = localEnv.Crypto.Encrypt(sequence.ToArray(), localEnv.Globals.Input);
+                // 🎯 Build 1-transform profile (TR = 1, GR = 1)
+                var profile = InputProfiler.CreateInputProfile(name: transform,
+                    sequence: sequence.ToArray(),
+                    tRs: new byte[] { 1 },
+                    globalRounds: 1
+                );
+
+                // 🔐 Encrypt using profile
+                var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
                 var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
-                var reverseSequence = GenerateReverseSequence(localEnv.Crypto, sequence.ToArray());
-                var decrypted = localEnv.Crypto.Decrypt(reverseSequence, encrypted);
+
+                // 🔓 Decrypt using header (no reverse sequence needed)
+                var decrypted = localEnv.Crypto.Decrypt(encrypted);
                 var isReversible = decrypted!.SequenceEqual(localEnv.Globals.Input);
                 Debug.Assert(isReversible);
+
+                // ⚡ Avalanche and key dependency tests
                 var (MangoAvalanchePayload, _, MangoKeyDependencyPayload, _) =
                     ProcessAvalancheAndKeyDependency(
-                        localEnv,
+                        localEnv.Crypto,
+                        localEnv.Globals.Input,
                         GlobalsInstance.Password,
-                        sequence.ToList());
+                        profile);
 
-                // ✅ Run cryptanalysis and retrieve the list of AnalysisResult objects
+                // 🧪 Run cryptanalysis
                 var analysisResults = localEnv.CryptoAnalysis.RunCryptAnalysis(
                     payload,
                     MangoAvalanchePayload,
@@ -2147,13 +2412,13 @@ public partial class Handlers
                     localEnv.Globals.Input,
                     null);
 
-                // ✅ Convert the results into a Dictionary of metric scores
+                // 📊 Extract scores into dictionary
                 Dictionary<string, double> scores = analysisResults!
                     .ToDictionary(result => result.Name, result => result.Score);
 
-                // ✅ Store the transform's scores
                 transformScores[transform] = scores;
             }
+
         }
 
         // ✅ Select the Best 2 Per Category
@@ -2181,62 +2446,6 @@ public partial class Handlers
         }
 
         return selectedTransforms;
-    }
-
-    private static double CalculateTotalMungeTime(ExecutionEnvironment localEnv, List<byte> transforms, int length)
-    {
-        /*
-            Calculates the total estimated time to process all possible sequences of transforms.
-            This is used to provide accurate time-to-completion estimates during the Munge process.
-
-            The formula accounts for:
-            - Machine performance (via benchmark ratio)
-            - Input size scaling
-            - Encrypt + Decrypt paths for Primary phase
-            - Encrypt-only paths for Avalanche and KeyDependency phases
-            - Global rounds setting
-
-            Steps:
-            1️⃣ For each sequence of transforms (permutation):
-                a. Sum the normalized, scaled time of each transform.
-                b. Adjust for rounds and scoring phases.
-            2️⃣ Sum each sequence time into the total estimated time.
-
-            ✅ Returns: total estimated time in milliseconds.
-        */
-
-        var totalTime = 0.0;
-
-        foreach (var seq in GeneratePermutations(transforms, length))
-        {
-            var seqTime = 0.0;
-
-            foreach (var transformId in seq!)
-            {
-                var transform = localEnv.Crypto.TransformRegistry[transformId];
-
-                // Normalize time relative to benchmarked baseline machine
-                var normalizedTime = transform.BenchmarkTimeMs *
-                                     (localEnv.Globals.BenchmarkBaselineTime / localEnv.Globals.CurrentBenchmarkTime);
-
-                // Scale based on input size vs. benchmarked size
-                var inputSizeFactor = localEnv.Globals.Input.Length / localEnv.Globals.BenchmarkBaselineSize;
-
-                // 🧮 Calculate total cost per transform for this sequence:
-                // Breakdown:
-                // 1️⃣ normalizedTime = Benchmark-adjusted time per transform (ms)
-                // 2️⃣ inputSizeFactor = Scaling for input size vs. benchmark (linear scaling)
-                // 3️⃣ Primary = Encrypt + Decrypt (x2)
-                // 4️⃣ Avalanche = Encrypt only (x1)
-                // 5️⃣ KeyDependency = Encrypt only (x1)
-                // 6️⃣ Total = x4 ops per round
-                seqTime += normalizedTime * inputSizeFactor * localEnv.Globals.Rounds * 4;
-            }
-
-            totalTime += seqTime;
-        }
-
-        return totalTime;
     }
 
     /// <summary>
@@ -2370,7 +2579,7 @@ public partial class Handlers
             IsError = true; // ✅ Explicit error flag
             IsSkipped = false; // ✅ Not skipped
 
-            Message = $"❌ Error: {errorMessage} (File: {"Unknown"}, Time: {DateTime.Now:G})";
+            Message = $"❌ Error: {errorMessage}";
             StatusColor = ConsoleColor.Red;
         }
 
@@ -2391,30 +2600,29 @@ public partial class Handlers
 
     public class ParamPack
     {
-        public string FileExtension { get; } // 🔹 ".gs" (BTR) or ".gse" (BTRR)
-        public string FunctionName { get; } // 🔹 "something 1" or "something 2"
+        public string? FileExtension { get; } // 🔹 ".gs" (BTR) or ".gse" (BTRR)
+        public string? FunctionName { get; } // 🔹 "something 1" or "something 2"
         public bool Reorder { get; } // 🔹 helps the report writer format report correctly
         public bool UseCuratedTransforms { get; } // 🔹 do we use a curated list of transforms?
         public int TopContenders { get; } // 🔹 how many contenders will we process?
         public int? SequenceLength { get; } // 🔹 how many contenders will we process?
         public int? ExitCount { get; } // 🔹 how many contenders will we process?
+        public byte[]? ReferenceSequence { get; } // 🔹 when using munge output directly, we need to infer the reference sequence
+        public string[] Args { get; }   // Commandline args passed from the CLI
 
-        public byte[]?
-            ReferenceSequence
-        { get; } // 🔹 when using munge output directly, we need to infer the reference sequence
-
-        public ParamPack(string extension, string functionName, int? sequenceLength = null, int? exitCount = null,
+        public ParamPack(string? extension = null, string? functionName = null, int? sequenceLength = null, int? exitCount = null,
             bool reorder = false, bool useCuratedTransforms = false, int topContenders = 0,
-            byte[]? referenceSequence = null)
+            byte[]? referenceSequence = null, string[] args = null!)
         {
-            FileExtension = extension ?? throw new ArgumentNullException(nameof(extension));
-            FunctionName = functionName ?? throw new ArgumentNullException(nameof(functionName));
+            FileExtension = extension;
+            FunctionName = functionName;
             SequenceLength = sequenceLength;
             ExitCount = exitCount;
             Reorder = reorder;
             UseCuratedTransforms = useCuratedTransforms;
             TopContenders = topContenders;
             ReferenceSequence = referenceSequence;
+            Args = args;
         }
     }
 
