@@ -15,6 +15,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangoBM", "MangoBM\MangoBM.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangoZI", "MangoZI\MangoZI.csproj", "{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CryptoAnalysisCore", "CryptoAnalysisCore\CryptoAnalysisCore.csproj", "{10922256-D680-4F0A-8700-41DCB04572A6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AesSoftwareCore", "AesSoftwareCore\AesSoftwareCore.csproj", "{97BFB2C2-6404-4CBC-B7A1-9EAA999E3C87}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangoCommon", "MangoCommon\MangoCommon.csproj", "{7248F876-90DE-486E-AB88-DF9618929B28}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -41,10 +47,22 @@ Global
 		{0D786B8F-C40E-45AB-B4AA-FE39B76CAA33}.Debug|x64.Build.0 = Debug|x64
 		{0D786B8F-C40E-45AB-B4AA-FE39B76CAA33}.Release|x64.ActiveCfg = Release|x64
 		{0D786B8F-C40E-45AB-B4AA-FE39B76CAA33}.Release|x64.Build.0 = Release|x64
-		{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}.Debug|x64.Build.0 = Debug|Any CPU
-		{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}.Release|x64.ActiveCfg = Release|Any CPU
-		{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}.Release|x64.Build.0 = Release|Any CPU
+		{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}.Debug|x64.ActiveCfg = Debug|x64
+		{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}.Debug|x64.Build.0 = Debug|x64
+		{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}.Release|x64.ActiveCfg = Release|x64
+		{9BC3E202-8C56-406D-B3CC-FF3BD03A7137}.Release|x64.Build.0 = Release|x64
+		{10922256-D680-4F0A-8700-41DCB04572A6}.Debug|x64.ActiveCfg = Debug|x64
+		{10922256-D680-4F0A-8700-41DCB04572A6}.Debug|x64.Build.0 = Debug|x64
+		{10922256-D680-4F0A-8700-41DCB04572A6}.Release|x64.ActiveCfg = Release|x64
+		{10922256-D680-4F0A-8700-41DCB04572A6}.Release|x64.Build.0 = Release|x64
+		{97BFB2C2-6404-4CBC-B7A1-9EAA999E3C87}.Debug|x64.ActiveCfg = Debug|x64
+		{97BFB2C2-6404-4CBC-B7A1-9EAA999E3C87}.Debug|x64.Build.0 = Debug|x64
+		{97BFB2C2-6404-4CBC-B7A1-9EAA999E3C87}.Release|x64.ActiveCfg = Release|x64
+		{97BFB2C2-6404-4CBC-B7A1-9EAA999E3C87}.Release|x64.Build.0 = Release|x64
+		{7248F876-90DE-486E-AB88-DF9618929B28}.Debug|x64.ActiveCfg = Debug|x64
+		{7248F876-90DE-486E-AB88-DF9618929B28}.Debug|x64.Build.0 = Debug|x64
+		{7248F876-90DE-486E-AB88-DF9618929B28}.Release|x64.ActiveCfg = Release|x64
+		{7248F876-90DE-486E-AB88-DF9618929B28}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
