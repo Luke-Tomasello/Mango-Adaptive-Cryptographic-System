@@ -1,0 +1,87 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "MangoZI/1.0.0": {
+        "dependencies": {
+          "CryptoLib": "1.0.0",
+          "InputProfiler": "1.0.0"
+        },
+        "runtime": {
+          "MangoZI.dll": {}
+        }
+      },
+      "CryptoAnalysisCore/1.0.0": {
+        "runtime": {
+          "CryptoAnalysisCore.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "CryptoLib/1.0.0": {
+        "runtime": {
+          "CryptoLib.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "InputProfiler/1.0.0": {
+        "dependencies": {
+          "CryptoAnalysisCore": "1.0.0",
+          "CryptoLib": "1.0.0",
+          "MangoCommon": "1.0.0"
+        },
+        "runtime": {
+          "InputProfiler.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "MangoCommon/1.0.0": {
+        "dependencies": {
+          "CryptoLib": "1.0.0"
+        },
+        "runtime": {
+          "MangoCommon.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "MangoZI/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "CryptoAnalysisCore/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "CryptoLib/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "InputProfiler/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "MangoCommon/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}
