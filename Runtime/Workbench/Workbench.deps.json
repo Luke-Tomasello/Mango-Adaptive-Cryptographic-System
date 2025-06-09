@@ -15,6 +15,7 @@
           "JetBrains.Annotations": "2024.3.0",
           "MangoCommon": "1.0.0",
           "Newtonsoft.Json": "13.0.3",
+          "ProfileManager": "1.0.0",
           "System.Data.SQLite.Core": "1.0.119"
         },
         "runtime": {
@@ -119,6 +120,19 @@
             "fileVersion": "1.0.0.0"
           }
         }
+      },
+      "ProfileManager/1.0.0": {
+        "dependencies": {
+          "CryptoAnalysisCore": "1.0.0",
+          "CryptoLib": "1.0.0",
+          "MangoCommon": "1.0.0"
+        },
+        "runtime": {
+          "ProfileManager.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
       }
     }
   },
@@ -177,6 +191,11 @@
       "sha512": ""
     },
     "MangoCommon/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "ProfileManager/1.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""
