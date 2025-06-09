@@ -78,9 +78,7 @@ public static class RegressionTests
                 var pretty = TSVPrettyPrinter.PrettyPrint(tsv, flags);
                 var joined = string.Join("\n", pretty);
                 
-                ColorConsole.WriteLine($"\n📥 InputType: {inputType}:{Convert.ToHexString(tsv)}\n");
-
-                ColorConsole.WriteLine($"\n📥 InputType: {inputType}\n{joined}\n");
+                ColorConsole.WriteLine($"\n📥 InputType: {inputType}\n{Convert.ToHexString(tsv)}\n{joined}\n");
 
                 var base64 = Convert.ToBase64String(tsv);
                 string key = inputType.ToString();
