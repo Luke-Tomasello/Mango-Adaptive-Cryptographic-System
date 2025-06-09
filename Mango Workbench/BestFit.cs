@@ -26,6 +26,7 @@ using Mango.Adaptive;
 using Mango.AnalysisCore;
 using Mango.Cipher;
 using Mango.Common;
+using Mango.ProfileManager;
 using Mango.Reporting;
 using Mango.SQL;
 using Mango.Utilities;
@@ -101,7 +102,8 @@ public partial class Handlers
         var paramPack = new ParamPack(functionName: "optimize sequence", args: args);
 
         // ✅ Pass control to RunBestFitAutotuneMT
-        var result = BestFitTransformRoundsCore(localEnv, userSequence, paramPack, exitCount: exitCount);
+        var resultQueue = new ConcurrentQueue<(int ThreadID, string Sequence, string ScoreDisplay)>();
+        var result = BestFitTransformRoundsCore(localEnv, userSequence, paramPack, resultQueue: resultQueue, exitCount: exitCount);
 
         // ✅ close the failure database  
         SequenceFailSQL.CloseDatabase();
@@ -191,7 +193,7 @@ public partial class Handlers
                 localEnv.Globals.MaxSequenceLen = 5;
                 args = new string[] { "-L5" };
                 MungeWorker(localEnv, "Munge K", validTransformIds, args);
-                
+
                 // Open failure database
                 var failDbPath = Path.Combine(
                     MangoPaths.GetProjectOutputDirectory(),
@@ -332,28 +334,88 @@ public partial class Handlers
         }
     }
 
-    public static (string, ConsoleColor) RunBTGRBatchHandler(ExecutionEnvironment parentEnv, string[] args)
+    public static (string, ConsoleColor) RunBTGRBatchHandler(ExecutionEnvironment localEnv, string[] args)
     {
-        // ✅ Use the same Global Rounds (GR) setting from Munge(A) as the BTR exit threshold.
-        // This ensures each transform permutation is evaluated up to the same GR depth used
-        // during original sequence discovery. Prevents premature exits while avoiding over-exploration.
-        // Example: For Combined data, GR = 6 → exitCount = 6 (1 attempt per GR level).
-        var exitCount = parentEnv.Globals.Rounds;
-        var paramPack = new ParamPack(".gs1", "batch optimize sequences", exitCount: exitCount, reorder: false,
-            useCuratedTransforms: false, topContenders: 5);
+        var exitCount = localEnv.Globals.Rounds;
+        var paramPack = new ParamPack(functionName: "batch optimize sequences", interactiveMode: false, args: args);
+        string logPath = Path.Combine(MangoPaths.GetProjectOutputDirectory(), "RunBTGRBatchHandler.log");
+        using var logWriter = new StreamWriter(logPath, append: true);
 
-        // ✅ Initialize the failure database  
-        var failDbPath = Path.Combine(
-            MangoPaths.GetProjectOutputDirectory(),
-            GetFailDBFilename(parentEnv, "BTRFailDB,")
-        );
+        foreach (InputType inputType in Enum.GetValues(typeof(InputType)))
+        {
+            if (inputType == InputType.UserData)
+                continue;
 
-        SequenceFailSQL.OpenDatabase(failDbPath, true);
+            foreach (var suffix in new[] { ".Fast", ".Best" })
+            {
+                string profileName = inputType + suffix;
+                var profile = ProfileService.LoadProfile(profileName);
 
-        var result = BTRBatchWorker(parentEnv, args, paramPack, BestFitTransformRoundsCore);
-        // ✅ close the failure database  
-        SequenceFailSQL.CloseDatabase();
-        return result;
+                if (profile == null)
+                {
+                    Console.WriteLine($"⚠️ Profile '{profileName}' not found. Skipping.");
+                    continue;
+                }
+
+                var userSequence = profile.Sequence.Select(t => t.ID).ToList();
+                var resultQueue = new ConcurrentQueue<(int ThreadID, string Sequence, string ScoreDisplay)>();
+                var result = BestFitTransformRoundsCore(localEnv, userSequence, paramPack, resultQueue: resultQueue, exitCount: exitCount);
+
+                if (result.IsError)
+                {
+                    Console.WriteLine($"❌ Failed BTR for {profileName}: {result.Message}");
+                    continue;
+                }
+
+                if (resultQueue.IsEmpty)
+                {
+                    Console.WriteLine($"⚠️ No result returned for {profileName}");
+                    continue;
+                }
+
+                var best = resultQueue.LastOrDefault();
+                if (best == default)
+                {
+                    Console.WriteLine($"⚠️ No result returned for {profileName}");
+                    continue;
+                }
+
+                var sequenceList = best.Sequence
+                    .Split("->", StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => s.Trim())
+                    .ToList();
+
+                var sequenceHelper = new SequenceHelper(localEnv.Crypto);
+                var parsed = sequenceHelper.ParseSequenceFull(sequenceList);
+
+                if (!parsed.SequenceAttributes.TryGetValue("GR", out string? grStr) || !int.TryParse(grStr, out int globalRounds))
+                {
+                    Console.WriteLine($"❌ Profile '{profileName}' missing 'GR' (GlobalRounds). Skipping.");
+                    continue;
+                }
+
+                var transformSequence = parsed.Transforms.Select(t => (t.ID, (byte)t.TR)).ToArray();
+                var new_profile = InputProfiler.CreateInputProfile(profileName, transformSequence, globalRounds);
+
+                bool saved = ProfileService.UpdateProfile(profileName, new_profile);
+
+                if (!saved)
+                {
+                    Console.WriteLine($"❌ Failed to save profile: {profileName}");
+                    continue;
+                }
+
+                TouchProfile(localEnv, new_profile);
+                InputProfiler.RefreshProfiles();
+                Console.WriteLine($"✅ Updated profile: {profileName} (appended to log)");
+
+                logWriter.WriteLine($"\n[{DateTime.Now:MM/dd/yyyy hh:mm tt}] ✅ Updated profile: {profileName}");
+                foreach (var item in resultQueue)
+                    logWriter.WriteLine($"[Thread {item.ThreadID}] 🏆 New Best: {item.Sequence} {item.ScoreDisplay}");
+            }
+        }
+
+        return ("✅ Batch optimize sequences completed successfully.", ConsoleColor.Green);
     }
 
     public static (string, ConsoleColor) RunBTGRRBatchHandler(ExecutionEnvironment parentEnv, string[] args)
@@ -864,6 +926,20 @@ public partial class Handlers
     /// (More filters may be added in future versions. See ParseTransformFilterArgs for implementation.)
     private static (string, ConsoleColor) MungeCore(ExecutionEnvironment parentEnv, string functionName, IReadOnlyList<byte> validTransformIds, string[] args)
     {
+        var validArgs = new List<(string parameterName, Type? expectedType, string help)>
+        {
+            ("-L+", typeof(int), "Starts Munge at sequence length N (e.g., -L5)"),
+            ("--restore", null, "Resumes Munge from the last saved restore point"),
+            ("--require-all", typeof(string), "Require transform IDs in all sequences (e.g., 41,43,45)"),
+            ("--no-repeat", typeof(string), "Forbid repeating transform IDs (e.g., 41,43,45)"),
+            ("--exclude", typeof(string), "Exclude transform IDs (e.g., 5,6,10-15)"),
+            ("--no-cutlist", null, "Disable CutList filtering"),
+            ("--remove-inverse", null, "Enbable inverse pruning"),
+        };
+        var argsResult = VerifyArgs(validArgs, args);
+        if (argsResult != null)
+            throw new ArgumentException(argsResult);
+
         var loopCounter = 0;
         var startTime = DateTime.UtcNow;
 #if DEBUG
@@ -1471,8 +1547,11 @@ public partial class Handlers
         return ($"RunMunge completed for max length {localEnv.Globals.MaxSequenceLen}.", ConsoleColor.Green);
     }
 
+    //private static BestFitResult BestFitTransformRoundsCore(ExecutionEnvironment parentEnv, List<byte> userSequence,
+    //    ParamPack? paramPack, bool batchMode = false, int exitCount = 5)
     private static BestFitResult BestFitTransformRoundsCore(ExecutionEnvironment parentEnv, List<byte> userSequence,
-        ParamPack? paramPack, bool batchMode = false, int exitCount = 5)
+        ParamPack? paramPack, ConcurrentQueue<(int ThreadID, string Sequence, string ScoreDisplay)> resultQueue,
+        bool batchMode = false, int exitCount = 5)
     {
         var threadPoolSize = Environment.ProcessorCount;
         var analysisQueue =
@@ -1494,6 +1573,14 @@ public partial class Handlers
             ? parentEnv.Globals.FunctionParms[paramPack!.FunctionName!] // ✅ Use FunctionParms if defined
             : paramPack.Args; // ✅ Fallback to default args
 
+        var validArgs = new List<(string parameterName, Type? expectedType, string help)>
+        {
+            ("--max-rounds", typeof(int), "Maximum number of rounds. Default: 9"),
+            ("--starting-round", typeof(int), $"Start at round N. Default: {parentEnv.Globals.GlobalRoundsForType()}"),
+        };
+        var argsResult = VerifyArgs(validArgs, args);
+        if (argsResult != null)
+            throw new ArgumentException(argsResult);
 
         // Max Global Rounds
         int maxGlobalRounds;
@@ -1673,6 +1760,7 @@ public partial class Handlers
                                                 highWaterMark = score;
                                                 bestSequence = threadSeq.FormattedSequence<string>(profile);
                                                 bestQueue.Enqueue((threadID, bestSequence, FormatScoreWithPassRatio(score, metrics, encryptionElapsedTime))!);
+                                                resultQueue.Enqueue((threadID, bestSequence, FormatScoreWithPassRatio(score, metrics, encryptionElapsedTime))!);
                                                 FlushBestList(bestQueue);
 
                                                 if (score > bestScore) bestScore = score;
@@ -1763,7 +1851,11 @@ public partial class Handlers
         var btrElapsed = DateTime.UtcNow - btrStartTime;
         ColorConsole.WriteLine($"\n<green>🏁 Best Fit Autotune completed in: {btrElapsed:c}</green>\n");
 
-        if (IsInteractiveWorkbench(parentEnv))
+        // 🧠 This check ensures we're in full interactive mode:
+        // - IsInteractiveWorkbench(parentEnv): true if we're running in the interactive Workbench (vs batch mode or script).
+        // - paramPack.InteractiveMode: true if this function was invoked as a top-level operation (not as a subroutine).
+        // ✅ Both must be true to allow prompting the user, displaying progress, etc.
+        if (IsInteractiveWorkbench(parentEnv) && paramPack.InteractiveMode)
         {
             if (bestScore > baselineScore)
             {
@@ -2666,10 +2758,10 @@ public partial class Handlers
         public int? ExitCount { get; } // 🔹 how many contenders will we process?
         public byte[]? ReferenceSequence { get; } // 🔹 when using munge output directly, we need to infer the reference sequence
         public string[] Args { get; }   // Commandline args passed from the CLI
-
+        public bool InteractiveMode { get; }  // Called directly by user/UI
         public ParamPack(string? extension = null, string? functionName = null, int? sequenceLength = null, int? exitCount = null,
-            bool reorder = false, bool useCuratedTransforms = false, int topContenders = 0,
-            byte[]? referenceSequence = null, string[] args = null!)
+                bool reorder = false, bool useCuratedTransforms = false, int topContenders = 0,
+                byte[]? referenceSequence = null, string[] args = null!, bool interactiveMode = true)
         {
             FileExtension = extension;
             FunctionName = functionName;
@@ -2680,6 +2772,7 @@ public partial class Handlers
             TopContenders = topContenders;
             ReferenceSequence = referenceSequence;
             Args = args;
+            InteractiveMode = interactiveMode;
         }
     }
 

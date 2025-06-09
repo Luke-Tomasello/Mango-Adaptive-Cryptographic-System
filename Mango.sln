@@ -21,6 +21,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AesSoftwareCore", "AesSoftw
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangoCommon", "MangoCommon\MangoCommon.csproj", "{7248F876-90DE-486E-AB88-DF9618929B28}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProfileManager", "ProfileManager\ProfileManager.csproj", "{E1BFFB3F-741E-4846-BD5B-AAC2D94AFC54}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -63,6 +65,10 @@ Global
 		{7248F876-90DE-486E-AB88-DF9618929B28}.Debug|x64.Build.0 = Debug|x64
 		{7248F876-90DE-486E-AB88-DF9618929B28}.Release|x64.ActiveCfg = Release|x64
 		{7248F876-90DE-486E-AB88-DF9618929B28}.Release|x64.Build.0 = Release|x64
+		{E1BFFB3F-741E-4846-BD5B-AAC2D94AFC54}.Debug|x64.ActiveCfg = Debug|x64
+		{E1BFFB3F-741E-4846-BD5B-AAC2D94AFC54}.Debug|x64.Build.0 = Debug|x64
+		{E1BFFB3F-741E-4846-BD5B-AAC2D94AFC54}.Release|x64.ActiveCfg = Release|x64
+		{E1BFFB3F-741E-4846-BD5B-AAC2D94AFC54}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

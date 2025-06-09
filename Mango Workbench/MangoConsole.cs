@@ -44,17 +44,17 @@ public static class MangoConsole
     {
         try
         {
-            // Immediate mode test
+            // Batchmode mode test
             //args = new string[] { "-RunCommand", "run munge", "-ExitJobComplete", "-maxSequenceLen", "4", "-inputType", "Random", "-passCount", "6", "-quiet", "-scoringMode", "Practical", "-mode", "Cryptographic", "-createMungeFailDB", "-logMungeOutput" };
             //args = new string[] { "-RunCommand", "run munge", "-RunCommand", "clear sequence", "-ExitJobComplete", "-maxSequenceLen", "2", "-inputType", "Random", "-passCount", "6", "-quiet", "-scoringMode", "Practical", "-mode", "Cryptographic" };
             //args = new string[] { "-RunCommand", "run best fit batch autotune(-L3 -P0 -DC -MF)", "-logMungeOutput", "-ExitJobComplete" };
             //args = new string[] { "-Rounds", "7" };
             //args = new string[] { "-RunCommand", "run munge(-L5 -restore)", "-ExitJobComplete", "-maxSequenceLen", "5", "-inputType", "Combined", "-passCount", "6", "-quiet", "-scoringMode", "Practical", "-mode", "Cryptographic", "-createMungeFailDB" };
             //args = new string[] { "-RunCommand", "run munge(-restore)", "-ExitJobComplete", "-maxSequenceLen", "4", "-inputType", "Combined", "-passCount", "6", "-quiet", "-mode", "Cryptographic", };
+            //args = new string[] { "-RunCommand", "run munge(--no-cutlist --remove-inverse)", "-ExitJobComplete", "-maxSequenceLen", "4", "-inputType", "Combined", "-passCount", "6", "-quiet", "-mode", "Cryptographic", };
 
             Console.OutputEncoding = System.Text.Encoding.UTF8;
             ColorConsole.WriteLine($"\n<yellow>🚀 Initializing Mango Workbench...</yellow>\n");
-
 
             // ✅ Initialize the cryptographic library with predefined options
             var options = new CryptoLibOptions(Scoring.MangoSalt);
@@ -83,7 +83,7 @@ public static class MangoConsole
             ParseCommandParameters(localEnv, args);
 
             // ✅ Before running the console, run regression tests of core components
-            if (IsInteractiveWorkbench(localEnv))
+            if (args.Any(a => a.Equals("--run-regression-tests", StringComparison.OrdinalIgnoreCase)))
                 RegressionTests.RunRegressionTests(localEnv);
 
             // ✅ Run the interactive console
@@ -550,6 +550,11 @@ public static class MangoConsole
                     "touch profiles",
                     (args => TouchProfiles(localEnv), 2, "Update full fidelity aggregate score for each profile.",
                         "touch profiles", experimental: true)
+                },
+                {
+                    "seed profiles",
+                    (args => SeedProfiles(localEnv), 2, "Seed the InputProfiles.json with unoptimized defaults.",
+                        "seed profiles", experimental: true)
                 },
                 {
                     "assess sequence",

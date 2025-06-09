@@ -34,7 +34,7 @@ internal class MangoZI
     {
         // 🔐 Step 1: Create your cryptographic engine with optional ZoneInfo
         byte[] Salt = [0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F, 0x70, 0x81, 0x92, 0xA3, 0xB4, 0xC5];
-        var options = new CryptoLibOptions(Salt, zoneInfo: "XYZ Corp. Marketing");
+        var options = new CryptoLibOptions(Salt, zoneInfo: "XYZ Corp. Marketing"u8.ToArray());
         var crypto = new CryptoLib("my password", options);
 
         // 📦 Step 2: Load or define your input data

@@ -37,6 +37,7 @@
     <ProjectReference Include="..\CryptoLib\CryptoLib.csproj" />
     <ProjectReference Include="..\InputProfiler\InputProfiler.csproj" />
     <ProjectReference Include="..\MangoCommon\MangoCommon.csproj" />
+    <ProjectReference Include="..\ProfileManager\ProfileManager.csproj" />
   </ItemGroup>
 
 </Project>

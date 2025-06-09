@@ -27,6 +27,8 @@ using Mango.Analysis;
 using Mango.AnalysisCore;
 using Mango.Cipher;
 using Mango.Common;
+using Mango.ProfileHelpers;
+using Mango.ProfileManager;
 using Mango.Reporting;
 using Mango.SQL;
 using Mango.Utilities;
@@ -44,18 +46,7 @@ namespace Mango.Workbench;
 
 public partial class Handlers
 {
-    public enum LogType
-    {
-        Informational,
-        Error,
-        Warning,
-        Debug
-    }
 
-    public static (string, ConsoleColor) Say(string[] args)
-    {
-        return (string.Join(" ", args).Trim(), ConsoleColor.Green);
-    }
     public static (string, ConsoleColor) RunClassification(ExecutionEnvironment localEnv, string[] args)
     {
         var input = localEnv.Globals.Input;
@@ -144,22 +135,9 @@ public partial class Handlers
         if (string.IsNullOrWhiteSpace(profileName))
             return ("❌ Profile name cannot be empty.", ConsoleColor.Red);
 
-        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
-        if (!File.Exists(path))
-            return ("⚠️ No profiles found.", ConsoleColor.Yellow);
-
-        var json = File.ReadAllText(path);
-        var rawProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
-
-        // Re-key with case-insensitive comparison
-        var comparer = StringComparer.OrdinalIgnoreCase;
-        var profileMap = new Dictionary<string, InputProfileDto>(rawProfiles ?? new(), comparer);
-
-        if (!profileMap.TryGetValue(profileName, out var dto))
+        var profile = ProfileService.LoadProfile(profileName);
+        if (profile == null)
             return ($"⚠️ Profile '{profileName}' not found.", ConsoleColor.Yellow);
-
-        var sequence = dto.Sequence.Select(pair => ((byte)pair[0], (byte)pair[1])).ToArray();
-        var profile = new InputProfile(profileName, sequence, dto.GlobalRounds, dto.AggregateScore);
 
         // Format the sequence as a command-line ready string
         string formatted = new SequenceHelper(localEnv.Crypto).FormattedSequence<string>(profile);
@@ -199,58 +177,18 @@ public partial class Handlers
 
         if (!parsed.SequenceAttributes.TryGetValue("GR", out string? grStr) || !int.TryParse(grStr, out int globalRounds))
         {
-            // Profiles must explicitly define 'GR' (GlobalRounds) to avoid hidden dependencies.
-            // Falling back to a default based on InputType can introduce subtle, hard-to-detect bugs,
-            // especially when reloading, optimizing, or comparing profiles. Enforcing this requirement
-            // ensures profiles are fully self-describing, reproducible, and compatible with strict workflows.
             return ("❌ Profile must explicitly specify 'GR' (GlobalRounds).", ConsoleColor.Red);
         }
 
         var transformSequence = parsed.Transforms.Select(t => (t.ID, (byte)t.TR)).ToArray();
         var profile = InputProfiler.CreateInputProfile(profileName, transformSequence, globalRounds);
 
-        // Load existing profiles
-        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
-        var existingProfiles = new List<InputProfile>();
-
-        if (File.Exists(path))
-        {
-            try
-            {
-                var json = File.ReadAllText(path);
-                var rawProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
-
-                if (rawProfiles != null)
-                {
-                    existingProfiles = rawProfiles
-                        .Select(kvp =>
-                        {
-                            var sequence = kvp.Value.Sequence
-                                .Select(pair => ((byte)pair[0], (byte)pair[1]))
-                                .ToArray();
-
-                            return new InputProfile(kvp.Key, sequence, kvp.Value.GlobalRounds, kvp.Value.AggregateScore);
-                        })
-                        .ToList();
-                }
-            }
-            catch (Exception ex)
-            {
-                return ($"❌ Failed to load existing profiles: {ex.Message}", ConsoleColor.Red);
-            }
-        }
-
-
-        // Check for overwrite
-        if (existingProfiles.Any(p => p.Name.Equals(profileName, StringComparison.OrdinalIgnoreCase)))
+        if (ProfileService.ProfileExists(profileName))
         {
             if (!AskYN($"⚠️ Profile '{profileName}' already exists. Overwrite?"))
                 return ($"⚠️ Save aborted. Profile '{profileName}' was not overwritten.", ConsoleColor.Yellow);
-
-            existingProfiles = existingProfiles.Where(p => !p.Name.Equals(profileName, StringComparison.OrdinalIgnoreCase)).ToList();
         }
 
-        #region Calc Aggrate Score
         // Run encryption to calculate AggregateScore
         var crypto = localEnv.Crypto;
         var input = localEnv.Globals.Input;
@@ -262,37 +200,13 @@ public partial class Handlers
             ProcessAvalancheAndKeyDependency(crypto, input, GlobalsInstance.Password, profile);
 
         var analysis = localEnv.CryptoAnalysis.RunCryptAnalysis(payload, avalanche, keydep, input);
-
         var aggregateScore = localEnv.CryptoAnalysis.CalculateAggregateScore(analysis, localEnv.Globals.ScoringMode);
 
-        // Update the profile object
         profile = profile with { AggregateScore = aggregateScore };
-        #endregion Calc Aggrate Score
 
-        existingProfiles.Add(profile);
-
-        try
-        {
-            // Convert InputProfiles to InputProfileDto
-            var dtoDict = existingProfiles.ToDictionary(
-                kvp => kvp.Name,
-                kvp => new InputProfileDto
-                {
-                    Sequence = kvp.Sequence
-                        .Select(pair => new List<byte> { pair.ID, pair.TR })
-                        .ToList(),
-                    GlobalRounds = kvp.GlobalRounds,
-                    AggregateScore = kvp.AggregateScore
-                }
-            );
-
-            var updatedJson = JsonSerializer.Serialize(dtoDict, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(path, updatedJson);
-        }
-        catch (Exception ex)
-        {
-            return ($"❌ Failed to save profile: {ex.Message}", ConsoleColor.Red);
-        }
+        bool success = ProfileService.UpdateProfile(profileName, profile);
+        if (!success)
+            return ($"❌ Failed to save profile '{profileName}'.", ConsoleColor.Red);
 
         RefreshProfiles();
         return ($"✅ Profile '{profileName}' saved successfully.", ConsoleColor.Green);
@@ -319,81 +233,35 @@ public partial class Handlers
             return ($"❌ Failed to parse current sequence: {ex.Message}", ConsoleColor.Red);
         }
 
-        if (!parsed.SequenceAttributes.TryGetValue("GR", out string? grStr) || !int.TryParse(grStr, out int globalRounds))
+        if (!SequenceParser.TryGetGlobalRounds(parsed.SequenceAttributes, out int globalRounds))
             return ("❌ Profile must explicitly specify 'GR' (GlobalRounds).", ConsoleColor.Red);
 
         var transformSequence = parsed.Transforms.Select(t => (t.ID, (byte)t.TR)).ToArray();
-        var profile = InputProfiler.CreateInputProfile(profileName, transformSequence, globalRounds);
 
-        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
-        var existingProfiles = new List<InputProfile>();
+        var profile = new InputProfile(profileName, transformSequence, globalRounds, 0);
 
-        if (File.Exists(path))
-        {
-            try
-            {
-                var json = File.ReadAllText(path);
-                var rawProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
-
-                if (rawProfiles != null)
-                {
-                    existingProfiles = rawProfiles
-                        .Select(kvp =>
-                        {
-                            var sequence = kvp.Value.Sequence
-                                .Select(pair => ((byte)pair[0], (byte)pair[1]))
-                                .ToArray();
-
-                            return new InputProfile(kvp.Key, sequence, kvp.Value.GlobalRounds, kvp.Value.AggregateScore);
-                        })
-                        .Where(p => !p.Name.Equals(profileName, StringComparison.OrdinalIgnoreCase)) // ← always remove old
-                        .ToList();
-                }
-            }
-            catch (Exception ex)
-            {
-                return ($"❌ Failed to load existing profiles: {ex.Message}", ConsoleColor.Red);
-            }
-        }
-
-        #region Calc Aggregate Score
-        var crypto = localEnv.Crypto;
-        var input = localEnv.Globals.Input;
-
-        var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
-        var payload = crypto.GetPayloadOnly(encrypted);
-
-        var (avalanche, _, keydep, _) =
-            ProcessAvalancheAndKeyDependency(crypto, input, GlobalsInstance.Password, profile);
-
-        var analysis = localEnv.CryptoAnalysis.RunCryptAnalysis(payload, avalanche, keydep, input);
-        var aggregateScore = localEnv.CryptoAnalysis.CalculateAggregateScore(analysis, localEnv.Globals.ScoringMode);
-        profile = profile with { AggregateScore = aggregateScore };
-        #endregion
-
-        existingProfiles.Add(profile);
-
+        // Recalculate score
         try
         {
-            var dtoDict = existingProfiles.ToDictionary(
-                kvp => kvp.Name,
-                kvp => new InputProfileDto
-                {
-                    Sequence = kvp.Sequence
-                        .Select(pair => new List<byte> { pair.ID, pair.TR })
-                        .ToList(),
-                    GlobalRounds = kvp.GlobalRounds,
-                    AggregateScore = kvp.AggregateScore
-                }
-            );
+            double score = ProfileScoreUtils.RecalculateAggregateScore(
+                localEnv.Crypto,
+                localEnv.Globals.Input,
+                GlobalsInstance.Password,
+                localEnv.Globals.Mode,
+                localEnv.Globals.ScoringMode,
+                profile);
 
-            var updatedJson = JsonSerializer.Serialize(dtoDict, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(path, updatedJson);
+            profile = profile with { AggregateScore = score };
         }
         catch (Exception ex)
         {
-            return ($"❌ Failed to replace profile: {ex.Message}", ConsoleColor.Red);
+            return ($"❌ Failed to recalculate score: {ex.Message}", ConsoleColor.Red);
         }
+
+        // Replace in storage
+        bool success = ProfileService.ReplaceProfile(profile);
+        if (!success)
+            return ($"❌ Failed to replace profile '{profileName}'.", ConsoleColor.Red);
 
         RefreshProfiles();
         return ($"✅ Profile '{profileName}' replaced successfully.", ConsoleColor.Green);
@@ -408,29 +276,14 @@ public partial class Handlers
         if (string.IsNullOrWhiteSpace(profileName))
             return ("❌ Profile name cannot be empty.", ConsoleColor.Red);
 
-        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
-        if (!File.Exists(path))
-            return ($"⚠️ No profiles found.", ConsoleColor.Yellow);
-
-        var json = File.ReadAllText(path);
-        var tempProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
-
-        // Wrap with case-insensitive comparer
-        var rawProfiles = tempProfiles != null
-            ? new Dictionary<string, InputProfileDto>(tempProfiles, StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, InputProfileDto>(StringComparer.OrdinalIgnoreCase);
-
-        if (!rawProfiles.ContainsKey(profileName))
-            return ($"⚠️ Profile '{profileName}' does not exist.", ConsoleColor.Yellow);
-
-        rawProfiles.Remove(profileName);
-
-        var updatedJson = JsonSerializer.Serialize(rawProfiles, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(path, updatedJson);
+        bool success = ProfileService.DeleteProfile(profileName);
+        if (!success)
+            return ($"⚠️ Profile '{profileName}' does not exist or failed to delete.", ConsoleColor.Yellow);
 
         RefreshProfiles();
         return ($"✅ Profile '{profileName}' deleted successfully.", ConsoleColor.Green);
     }
+
     public static (string, ConsoleColor) RenameProfile(string[] args)
     {
         if (args.Length != 2)
@@ -442,28 +295,9 @@ public partial class Handlers
         if (string.IsNullOrWhiteSpace(oldName) || string.IsNullOrWhiteSpace(newName))
             return ("❌ Profile names cannot be empty.", ConsoleColor.Red);
 
-        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
-        if (!File.Exists(path))
-            return ($"⚠️ No profiles found.", ConsoleColor.Yellow);
-
-        var json = File.ReadAllText(path);
-        var tempProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
-
-        var rawProfiles = tempProfiles != null
-            ? new Dictionary<string, InputProfileDto>(tempProfiles, StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, InputProfileDto>(StringComparer.OrdinalIgnoreCase);
-
-        if (!rawProfiles.TryGetValue(oldName, out var profile))
-            return ($"⚠️ Profile '{oldName}' does not exist.", ConsoleColor.Yellow);
-
-        if (rawProfiles.ContainsKey(newName))
-            return ($"⚠️ A profile named '{newName}' already exists.", ConsoleColor.Yellow);
-
-        rawProfiles.Remove(oldName);
-        rawProfiles[newName] = profile;
-
-        var updatedJson = JsonSerializer.Serialize(rawProfiles, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(path, updatedJson);
+        bool success = ProfileService.RenameProfile(oldName, newName);
+        if (!success)
+            return ($"⚠️ Rename failed. Check if '{oldName}' exists and '{newName}' doesn't already.", ConsoleColor.Yellow);
 
         RefreshProfiles();
         return ($"✅ Profile renamed from '{oldName}' to '{newName}' successfully.", ConsoleColor.Green);
@@ -471,35 +305,18 @@ public partial class Handlers
 
     public static (string, ConsoleColor) ListProfiles(ExecutionEnvironment localEnv, string[] args)
     {
-        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
-        if (!File.Exists(path))
-            return ("⚠️ No profiles found.", ConsoleColor.Yellow);
-
-        var json = File.ReadAllText(path);
-        var rawProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
-        if (rawProfiles == null || rawProfiles.Count == 0)
-            return ("⚠️ No profiles found.", ConsoleColor.Yellow);
-
         string wildcard = args.Length == 0 ? "*" : string.Join(" ", args).Trim();
         string pattern = "^" + Regex.Escape(wildcard)
             .Replace(@"\*", ".*")
             .Replace(@"\?", ".") + "$";
 
-        var regex = new Regex(pattern, RegexOptions.IgnoreCase);
+        var matches = ProfileService.FilterProfiles(pattern);
 
-        var matchingProfiles = rawProfiles
-            .Where(kvp => regex.IsMatch(kvp.Key))
-            .OrderBy(kvp => kvp.Key)
-            .ToList();
-
-        if (matchingProfiles.Count == 0)
+        if (matches.Count == 0)
             return ($"⚠️ No profiles matched pattern: \"{pattern}\"", ConsoleColor.Yellow);
 
-        foreach (var kvp in matchingProfiles)
+        foreach (var (name, dto) in matches)
         {
-            var name = kvp.Key;
-            var dto = kvp.Value;
-
             var sequence = dto.Sequence.Select(pair => ((byte)pair[0], (byte)pair[1])).ToArray();
 
             var readable = string.Join(" -> ",
@@ -517,87 +334,43 @@ public partial class Handlers
         }
 
         PressAnyKey();
-
         return ("✅ Profile list complete.", ConsoleColor.Green);
     }
 
+
+    // TouchProfiles: UI wrapper to refresh and rescore all profiles
     public static (string, ConsoleColor) TouchProfiles(ExecutionEnvironment parentEnv)
     {
-        var path = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
-        if (!File.Exists(path))
+        var allProfiles = ProfileService.GetAllProfiles();
+        if (allProfiles.Count == 0)
             return ("⚠️ No profiles found.", ConsoleColor.Yellow);
 
-        var json = File.ReadAllText(path);
-        var rawProfiles = JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(json);
-        if (rawProfiles == null || rawProfiles.Count == 0)
-            return ("⚠️ No profiles found.", ConsoleColor.Yellow);
-
-        var updatedProfiles = new Dictionary<string, InputProfileDto>();
-        var transformRegistry = parentEnv.Crypto.TransformRegistry;
-
-        foreach (var kvp in rawProfiles.OrderBy(kvp => kvp.Key))
+        foreach (var profile in allProfiles.OrderBy(p => p.Name))
         {
-            var fullName = kvp.Key;
-            var dto = kvp.Value;
-            var sequence = dto.Sequence.Select(pair => ((byte)pair[0], (byte)pair[1])).ToArray();
-
-            string baseName = fullName.Split('.')[0];
-
-            InputType inputType;
-            if (!Enum.TryParse<InputType>(baseName, ignoreCase: true, out inputType))
+            var sw = Stopwatch.StartNew();
+            if (!TouchProfile(parentEnv, profile))
             {
-                inputType = InputType.Combined;
-                Console.WriteLine($"⚠️ Profile '{fullName}' has unrecognized base name '{baseName}'. Falling back to InputType.Combined.");
+                ColorConsole.WriteLine($"<red>❌ Failed to refresh '{profile.Name}'</red>");
+                continue;
             }
 
-            var localEnv = new ExecutionEnvironment(parentEnv);
-            localEnv.Globals.UpdateSetting("InputType", inputType);
+            double? newScore = ProfileService.FetchScore(profile.Name);
+            sw.Stop();
 
-            var profile = new InputProfile(fullName, sequence, dto.GlobalRounds, dto.AggregateScore);
-
-            try
+            if (newScore == null)
             {
-                var crypto = localEnv.Crypto;
-                var input = localEnv.Globals.Input;
-
-                var sw = Stopwatch.StartNew();
-                var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
-                sw.Stop();
-                var payload = crypto.GetPayloadOnly(encrypted);
-
-                var (avalanche, _, keydep, _) =
-                    ProcessAvalancheAndKeyDependency(crypto, input, GlobalsInstance.Password, profile);
-
-                var analysis = localEnv.CryptoAnalysis.RunCryptAnalysis(payload, avalanche, keydep, input);
-                var aggregateScore = localEnv.CryptoAnalysis.CalculateAggregateScore(analysis, localEnv.Globals.ScoringMode);
-
-                profile = profile with { AggregateScore = aggregateScore };
-
-                updatedProfiles[fullName] = new InputProfileDto
-                {
-                    Sequence = profile.Sequence
-                        .Select(pair => new List<byte> { pair.ID, pair.TR })
-                        .ToList(),
-                    GlobalRounds = profile.GlobalRounds,
-                    AggregateScore = profile.AggregateScore
-                };
-
-                Console.WriteLine($"✅ Refreshed profile: {fullName} (Score: {aggregateScore:F10}) ({sw.Elapsed.TotalMilliseconds} ms)");
+                ColorConsole.WriteLine($"<red>❌ Failed to retrieve updated score for '{profile.Name}'</red>");
+                continue;
             }
-            catch (Exception ex)
+
+            if (Math.Abs(newScore.Value - profile.AggregateScore) < 0.000001)
             {
-                Console.WriteLine($"❌ Failed to refresh '{fullName}': {ex.Message}");
+                ColorConsole.WriteLine($"<yellow>⚠️ No update needed for '{profile.Name}' (Score unchanged: {newScore.Value:F10})</yellow>");
             }
-        }
-
-        try
-        {
-            var updatedJson = JsonSerializer.Serialize(updatedProfiles, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(path, updatedJson);
-        }
-        catch (Exception ex)
-        {
-            return ($"❌ Failed to write updated profiles: {ex.Message}", ConsoleColor.Red);
+            else
+            {
+                ColorConsole.WriteLine($"<green>✅ Refreshed profile: {profile.Name} (Score: {newScore.Value:F10}) ({sw.Elapsed.TotalMilliseconds:F2} ms)</green>");
+            }
         }
 
         if (IsInteractiveWorkbench(parentEnv))
@@ -607,9 +380,122 @@ public partial class Handlers
         return ("✅ All profiles touched and updated.", ConsoleColor.Green);
     }
 
+
+    // TouchProfile by name
+    public static bool TouchProfile(ExecutionEnvironment parentEnv, string profileName)
+    {
+        var profile = ProfileService.LoadProfile(profileName);
+        if (profile == null)
+            return false;
+
+        return TouchProfile(parentEnv, profile);
+    }
+
+    // TouchProfile by profile instance
+    public static bool TouchProfile(ExecutionEnvironment parentEnv, InputProfile profile)
+    {
+        string baseName = profile.Name.Split('.')[0];
+        if (!Enum.TryParse<InputType>(baseName, ignoreCase: true, out var inputType))
+            inputType = InputType.Combined;
+
+        var localEnv = new ExecutionEnvironment(parentEnv);
+        localEnv.Globals.UpdateSetting("InputType", inputType);
+
+        try
+        {
+            var updated = ProfileService.RecalculateProfileScore(
+                profile,
+                localEnv.Crypto,
+                localEnv.Globals.Input,
+                GlobalsInstance.Password,
+                localEnv.Globals.Mode,
+                localEnv.Globals.ScoringMode
+            );
+
+            return ProfileService.UpdateProfile(updated.Name, updated);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Failed to refresh '{profile.Name}': {ex.Message}");
+            return false;
+        }
+    }
+
+    public static (string, ConsoleColor) SeedProfiles(ExecutionEnvironment parentEnv)
+    {
+        string[] inputCodes = { "DR", "DN", "DS", "DC" }; // Random, Natural, Sequence, Combined
+        string[] inputNames = { "Random", "Natural", "Sequence", "Combined" };
+        string contenderDir = GetProjectDirectory("Contender Archive");
+        string profilePath = Path.Combine(GetProgectDataDirectory(), "InputProfiles.json");
+
+        var newProfiles = File.Exists(profilePath)
+            ? JsonSerializer.Deserialize<Dictionary<string, InputProfileDto>>(File.ReadAllText(profilePath))
+                ?? new Dictionary<string, InputProfileDto>()
+            : new Dictionary<string, InputProfileDto>();
+
+        var updated = new List<string>();
+        var created = new List<string>();
+
+        for (int i = 0; i < inputCodes.Length; i++)
+        {
+            string code = inputCodes[i];
+            string name = inputNames[i];
+
+            string fastFile = Path.Combine(contenderDir, $"Contenders,-L3-P6-{code}-MC-SP.txt");
+            string bestFile = Path.Combine(contenderDir, $"Contenders,-L4-P6-{code}-MC-SP.txt");
+
+            if (!ProfileService.TryProcessContenderFile(fastFile, name + ".Fast", newProfiles, created, updated))
+                Console.WriteLine($"⚠️ Could not process {Path.GetFileName(fastFile)}");
+
+            if (!ProfileService.TryProcessContenderFile(bestFile, name + ".Best", newProfiles, created, updated))
+                Console.WriteLine($"⚠️ Could not process {Path.GetFileName(bestFile)}");
+        }
+
+        // Write updated profiles
+        try
+        {
+            var updatedJson = JsonSerializer.Serialize(newProfiles, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(profilePath, updatedJson);
+        }
+        catch (Exception ex)
+        {
+            return ($"❌ Failed to write updated profiles: {ex.Message}", ConsoleColor.Red);
+        }
+
+        // Logging
+        foreach (var p in updated)
+            ColorConsole.WriteLine($"<green>Profile {p} updated.</green>");
+
+        foreach (var p in created)
+            ColorConsole.WriteLine($"<yellow>Profile {p} created.</yellow>");
+
+        // Discover untouched profiles
+        var allNames = ProfileService.GetAllProfiles().Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var untouched = allNames.Except(updated.Concat(created), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var p in untouched.OrderBy(x => x))
+            ColorConsole.WriteLine($"<gray>Profile {p} was not affected by seeding.</gray>");
+
+        // Summary
+        ColorConsole.WriteLine($"\n<blue>📌 Summary: {created.Count} created, {updated.Count} updated, {untouched.Count()} untouched.</blue>");
+
+        PressAnyKey();
+        RefreshProfiles();
+
+        return ($"✅ Seeded {updated.Count + created.Count} profiles.", ConsoleColor.Green);
+    }
+
     #endregion Profile Management
     public static (string, ConsoleColor) AssessSequence(ExecutionEnvironment localEnv, List<string> sequence, string[] args, List<string>? results)
     {
+        var validArgs = new List<(string parameterName, Type? expectedType, string help)>
+        {
+            ("--password", typeof(string), "Override the defaut password."),
+        };
+        var argsResult = VerifyArgs(validArgs, args);
+        if (argsResult != null)
+            throw new ArgumentException(argsResult);
+
         var inputTypes = Enum.GetValues(typeof(InputType)).Cast<InputType>();
         var password = GlobalsInstance.Password;
         using var _ = new BatchModeScope(localEnv); // Sets BatchMode = true
@@ -678,9 +564,184 @@ public partial class Handlers
 
         return ("Assess Sequence completed successfully.", ConsoleColor.Green);
     }
-
+#if true
     public static (string, ConsoleColor) SelectBestFast(ExecutionEnvironment localEnv, string[] args)
     {
+        string logPath = Path.Combine(MangoPaths.GetProjectOutputDirectory(), "RunBTGRBatchHandler.log");
+        if (!File.Exists(logPath))
+            return ($"❌ Log file not found: {logPath}", ConsoleColor.Red);
+
+        var lines = File.ReadAllLines(logPath);
+        var candidateMap = new Dictionary<string, List<string>>();
+        string? currentInputType = null;
+
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            var headerMatch = Regex.Match(line, @"Updated profile: (\w+)", RegexOptions.IgnoreCase);
+            if (headerMatch.Success)
+            {
+                var fullProfile = headerMatch.Groups[1].Value;
+                currentInputType = fullProfile.Split('.')[0];
+                if (!candidateMap.ContainsKey(currentInputType))
+                    candidateMap[currentInputType] = new();
+                continue;
+            }
+
+            if (line.Contains("New Best:") && currentInputType != null)
+            {
+                candidateMap[currentInputType].Add(line.Trim());
+            }
+        }
+
+        foreach (var (inputTypeStr, entries) in candidateMap)
+        {
+            if (!Enum.TryParse<InputType>(inputTypeStr, out var inputType))
+            {
+                Console.WriteLine($"⚠️ Skipping unrecognized input type: {inputTypeStr}");
+                continue;
+            }
+
+            var scored = new List<(List<string> Sequence, double Score, double TimeMs, string RawLine)>();
+            var helper = new SequenceHelper(localEnv.Crypto);
+
+            foreach (var rawLine in entries)
+            {
+                var seqStart = rawLine.IndexOf("New Best:") + "New Best:".Length;
+                var grIndex = rawLine.IndexOf("| (GR:");
+                if (seqStart < 0 || grIndex < 0 || grIndex <= seqStart) continue;
+
+                var sequenceStr = rawLine[seqStart..grIndex].Trim();
+                var grMatch = Regex.Match(rawLine, @"\(GR:(\d+)\)");
+                if (!grMatch.Success) continue;
+                int gr = int.Parse(grMatch.Groups[1].Value);
+
+                string fullSeq = sequenceStr + " | (GR:" + gr + ")";
+                var parsed = helper.ParseSequenceFull(fullSeq);
+                if (parsed == null) continue;
+
+                var formatted = helper.FormattedSequence<List<string>>(parsed,
+                    SequenceFormat.ID | SequenceFormat.TRounds | SequenceFormat.RightSideAttributes, 2, true);
+
+                var env = new ExecutionEnvironment(localEnv);
+                env.Globals.UpdateSetting("InputType", inputType);
+
+                try
+                {
+                    var profile = InputProfiler.CreateInputProfile("temp",
+                        parsed.Transforms.Select(t => t.ID).ToArray(),
+                        parsed.Transforms.Select(t => (byte)t.TR).ToArray(),
+                        gr);
+
+                    var crypto = env.Crypto;
+                    var input = env.Globals.Input;
+
+                    var sw = Stopwatch.StartNew();
+                    var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+                    sw.Stop();
+
+                    var payload = crypto.GetPayloadOnly(encrypted);
+                    var (av, _, kd, _) = ProcessAvalancheAndKeyDependency(crypto, input, GlobalsInstance.Password, profile);
+                    var analysis = env.CryptoAnalysis.RunCryptAnalysis(payload, av, kd, input);
+                    var score = env.CryptoAnalysis.CalculateAggregateScore(analysis, env.Globals.ScoringMode);
+
+                    var match = Regex.Match(rawLine, @"\(([\d.]+)ms\)");
+                    if (!match.Success)
+                        throw new InvalidDataException($"❌ Could not extract time from raw line: {rawLine}");
+
+                    double recordedTimeMs = double.Parse(match.Groups[1].Value);
+
+                    scored.Add((formatted, score, recordedTimeMs, rawLine));
+                }
+                catch { }
+            }
+
+            if (scored.Count == 0)
+            {
+                Console.WriteLine($"⚠️ No valid candidates for {inputType}.");
+                continue;
+            }
+
+            var best = scored.OrderByDescending(s => s.Score).First();
+            var fast = scored.Where(s => !SequenceMatch(s, best)).OrderBy(s => s.TimeMs).ThenByDescending(s => s.Score).FirstOrDefault();
+
+            Console.WriteLine($"\n===== 🏆 Best Sequence for {inputType} =====\n");
+            best.Sequence.ForEach(Console.WriteLine);
+            Console.WriteLine($"\nScore: {best.Score:F6}, Time: {best.TimeMs:F2}ms\n");
+
+            if (AskYN("Register this as .Best?"))
+                SaveAsProfile(localEnv, inputType + ".Best", best.Sequence, best.Score, ExtractGR(best.Sequence));
+
+            if (fast != default)
+            {
+                Console.WriteLine($"\n===== ⚡ Fast Sequence for {inputType} =====\n");
+                fast.Sequence.ForEach(Console.WriteLine);
+                Console.WriteLine($"\nScore: {fast.Score:F6}, Time: {fast.TimeMs:F2}ms\n");
+
+                if (AskYN("Register this as .Fast?"))
+                    SaveAsProfile(localEnv, inputType + ".Fast", fast.Sequence, fast.Score, ExtractGR(fast.Sequence));
+            }
+        }
+
+        PressAnyKey();
+        return ("✅ SelectBestFast completed.", ConsoleColor.Green);
+
+        static int ExtractGR(List<string> sequence)
+        {
+            var attr = sequence.LastOrDefault(s => s.Contains("(GR:"));
+            if (attr != null)
+            {
+                var match = Regex.Match(attr, @"GR:(\d+)");
+                if (match.Success)
+                    return int.Parse(match.Groups[1].Value);
+            }
+
+            throw new InvalidOperationException("❌ Unable to extract (GR:...) from the sequence footer.");
+        }
+
+        static void SaveAsProfile(ExecutionEnvironment localEnv, string name, List<string> sequence, double score, int parsedGR)
+        {
+            var helper = new SequenceHelper(localEnv.Crypto);
+            var parsed = helper.ParseSequenceFull(sequence);
+
+            var profile = new InputProfile(name,
+                parsed.Transforms.Select(t => (t.ID, (byte)t.TR)).ToArray(),
+                parsedGR, score);
+
+            ProfileService.UpdateProfile(name, profile);
+            RefreshProfiles();
+            Console.WriteLine($"✅ Registered profile: {name} (Score: {score:F6})");
+        }
+
+        static bool SequenceMatch(
+            (List<string> Sequence, double Score, double TimeMs, string RawLine) a,
+            (List<string> Sequence, double Score, double TimeMs, string RawLine) b)
+        {
+            if (a.Sequence.Count != b.Sequence.Count)
+                return false;
+
+            for (int i = 0; i < a.Sequence.Count; i++)
+                if (a.Sequence[i] != b.Sequence[i])
+                    return false;
+
+            return true;
+        }
+
+    }
+
+#else
+    public static (string, ConsoleColor) SelectBestFast(ExecutionEnvironment localEnv, string[] args)
+    {
+        var validArgs = new List<(string parameterName, Type? expectedType, string help)>
+        {
+            ("--file", typeof(string), "File name that contains the Best Fit 'run optimize' results."),
+            ("--min-passCount", typeof(int), "Optional minimum pass count."),
+        };
+        var argsResult = VerifyArgs(validArgs, args);
+        if (argsResult != null)
+            throw new ArgumentException(argsResult);
+
         var fileIndex = Array.IndexOf(args, "--file");
         if (fileIndex == -1 || fileIndex >= args.Length - 1)
             return ("❌ Missing or malformed --file <filename> argument.", ConsoleColor.Red);
@@ -691,9 +752,11 @@ public partial class Handlers
 
         // Optional minimum pass count
         int? minPassCount = null;
-        var passArg = args.FirstOrDefault(a => a.StartsWith("--min-passCount"));
-        if (passArg != null && int.TryParse(passArg.Split(' ').Last(), out int min))
+        int index = Array.FindIndex(args, a => a.Equals("--min-passCount", StringComparison.OrdinalIgnoreCase));
+
+        if (index >= 0 && index < args.Length - 1 && int.TryParse(args[index + 1], out int min))
             minPassCount = min;
+
 
         // Read and clean candidate sequences
         var candidateLines = File.ReadAllLines(filename)
@@ -803,21 +866,7 @@ public partial class Handlers
 
         return ("✅ SelectBestFast completed.", ConsoleColor.Green);
     }
-
-    // Helper comparer to prevent duplicate sequence lists
-    //class SequenceListComparer : IEqualityComparer<List<string>>
-    //{
-    //    public bool Equals(List<string>? x, List<string>? y)
-    //    {
-    //        if (x == null || y == null) return false;
-    //        return x.SequenceEqual(y);
-    //    }
-
-    //    public int GetHashCode(List<string> obj)
-    //    {
-    //        return string.Join("|", obj).GetHashCode();
-    //    }
-    //}
+#endif
     class SequenceListComparer : IEqualityComparer<List<string>?>
     {
         public bool Equals(List<string>? x, List<string>? y)
@@ -834,7 +883,6 @@ public partial class Handlers
             return obj.Aggregate(17, (hash, str) => hash * 31 + (str?.GetHashCode() ?? 0));
         }
     }
-
 
     public static (string, ConsoleColor) RunRegressionTests(ExecutionEnvironment localEnv)
     {
@@ -3002,6 +3050,14 @@ public partial class Handlers
 
     public static (string, ConsoleColor) RunSequenceHandler(ExecutionEnvironment parentEnv, string[] args, List<string> sequence)
     {
+        var validArgs = new List<(string parameterName, Type? expectedType, string help)>
+        {
+            ("--password", typeof(string), "Override the defaut password."),
+        };
+        var argsResult = VerifyArgs(validArgs, args);
+        if (argsResult != null)
+            throw new ArgumentException(argsResult);
+
         // 🔐 Determine password
         string password;
         var passwordIndex = Array.IndexOf(args, "--password");
@@ -3142,7 +3198,18 @@ public partial class Handlers
             return ($"Error while running sequence: {ex.Message}", ConsoleColor.Red);
         }
     }
+    public enum LogType
+    {
+        Informational,
+        Error,
+        Warning,
+        Debug
+    }
 
+    public static (string, ConsoleColor) Say(string[] args)
+    {
+        return (string.Join(" ", args).Trim(), ConsoleColor.Green);
+    }
     #region Run Best Fit (Munge(A) Interactive
 
     public static (string, ConsoleColor) RunBestFitHandler(ExecutionEnvironment localEnv, List<string> sequence)

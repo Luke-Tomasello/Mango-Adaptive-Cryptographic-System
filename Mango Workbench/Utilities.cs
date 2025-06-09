@@ -1192,7 +1192,7 @@ public class GlobalsInstance
 
     public bool BatchMode { get; set; } = false; // never saved, never shown
     public string Commandline { get; set; } = null!; // never saved, never shown
-    public Dictionary<string, string[]> FunctionParms = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string[]> FunctionParms { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     #endregion Batch Mode Processing
 
@@ -1945,6 +1945,87 @@ public static class UtilityHelpers
         0x36, 0x0E, 0x06, 0xA3,
         0xE6, 0x24, 0x9E, 0x35
     };
+    public static string? VerifyArgs(IEnumerable<(string parameterName, Type? expectedType, string helpText)> valid, string[] args)
+    {
+        // Case 1: Pure help request
+        if (args.Length == 1 && (args[0] == "?" || args[0] == "/h" || args[0].Equals("help", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "\n" + string.Join(Environment.NewLine,
+                valid.Select(v => $"{v.parameterName.PadRight(18)}{v.helpText}"));
+        }
+
+        var validDict = valid.ToDictionary(
+            v => v.parameterName.TrimEnd('+'),
+            v => (v.expectedType, v.helpText, join: v.parameterName.EndsWith('+'))
+        );
+
+        int i = 0;
+        while (i < args.Length)
+        {
+            var current = args[i];
+
+            var match = validDict.FirstOrDefault(v =>
+                v.Value.join ? current.StartsWith(v.Key) : current == v.Key);
+
+            if (string.IsNullOrEmpty(match.Key))
+            {
+                return $"Error: Unrecognized parameter '{current}'" + Environment.NewLine +
+                       string.Join(Environment.NewLine,
+                           valid.Select(v => $"{v.parameterName.PadRight(18)}{v.helpText}"));
+            }
+
+            var (expectedType, helpText, join) = match.Value;
+
+            // Flag with no value
+            if (expectedType == null)
+            {
+                i++;
+                continue;
+            }
+
+            if (join)
+            {
+                var valuePart = current.Substring(match.Key.Length);
+                if (string.IsNullOrWhiteSpace(valuePart))
+                {
+                    return $"Error: Missing argument for parameter '{match.Key}'" + Environment.NewLine +
+                           string.Join(Environment.NewLine,
+                               valid.Select(v => $"{v.parameterName.PadRight(18)}{v.helpText}"));
+                }
+
+                try { Convert.ChangeType(valuePart, expectedType); }
+                catch
+                {
+                    return $"Error: Could not convert argument '{valuePart}' to type {expectedType.Name} for parameter '{match.Key}'" + Environment.NewLine +
+                           string.Join(Environment.NewLine,
+                               valid.Select(v => $"{v.parameterName.PadRight(18)}{v.helpText}"));
+                }
+
+                i++;
+            }
+            else
+            {
+                if (i + 1 >= args.Length || args[i + 1].StartsWith('-'))
+                {
+                    return $"Error: Missing argument for parameter '{match.Key}'" + Environment.NewLine +
+                           string.Join(Environment.NewLine,
+                               valid.Select(v => $"{v.parameterName.PadRight(18)}{v.helpText}"));
+                }
+
+                try { Convert.ChangeType(args[i + 1], expectedType); }
+                catch
+                {
+                    return $"Error: Could not convert argument '{args[i + 1]}' to type {expectedType.Name} for parameter '{match.Key}'" + Environment.NewLine +
+                           string.Join(Environment.NewLine,
+                               valid.Select(v => $"{v.parameterName.PadRight(18)}{v.helpText}"));
+                }
+
+                i += 2;
+            }
+        }
+
+        return null; // ✅ All good
+    }
 
     /// <summary>
     /// Prompts the user to select a number within a given range.

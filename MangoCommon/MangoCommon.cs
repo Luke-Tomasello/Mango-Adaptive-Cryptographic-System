@@ -11,7 +11,12 @@ public record InputProfile(
     int GlobalRounds,               // Required by core + Workbench for configuration
     double AggregateScore
 );
-
+public class InputProfileDto
+{
+    public List<List<byte>> Sequence { get; set; } = new();
+    public int GlobalRounds { get; set; }
+    public double AggregateScore { get; set; }
+}
 public class Scoring
 {
     public static readonly byte[] MangoSalt = [0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F, 0x70, 0x81, 0x92, 0xA3, 0xB4, 0xC5];
@@ -135,6 +140,13 @@ public static class MangoPaths
     public static string GetProjectOutputDirectory()
     {
         var path = Path.Combine(MangoPaths.GetProgectBaseDirectory(), "Output");
+        Directory.CreateDirectory(path); // Ensure it exists
+        return path;
+    }
+    //Contender Archive
+    public static string GetProjectDirectory(string folder)
+    {
+        var path = Path.Combine(MangoPaths.GetProgectBaseDirectory(), folder);
         Directory.CreateDirectory(path); // Ensure it exists
         return path;
     }
