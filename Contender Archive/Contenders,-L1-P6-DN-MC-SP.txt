@@ -1,0 +1,7 @@
+===== ** Analysis Summary ** =====
+Mode: Cryptographic
+InputType: Natural
+Scoring Mode: Practical
+GR (Global Rounds): 3
+Max Sequence Length: 4
+==================================
