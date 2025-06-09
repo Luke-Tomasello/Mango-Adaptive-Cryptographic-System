@@ -33,7 +33,7 @@ namespace Mango.Cipher
 {
     public class CryptoLibOptions(
         byte[] salt,
-        string zoneInfo = null!,
+        byte[]? zoneInfo = null,
         Behaviors behavior = Behaviors.Rfc2898,
         int iterations = 100_000)
     {
@@ -41,7 +41,7 @@ namespace Mango.Cipher
         {
             return new CryptoLibOptions(
                 (byte[])Salt.Clone(),
-                ZoneInfo,
+                ZoneInfo is not null ? (byte[])ZoneInfo.Clone() : null,
                 Behavior,
                 Iterations
             );
@@ -50,25 +50,25 @@ namespace Mango.Cipher
         /// <summary>
         /// Number of iterations used in PBKDF2 key stretching. Higher values increase security at the cost of performance.
         /// </summary>
-        public int Iterations { get; set; } = iterations;
+        public int Iterations { get; } = iterations;
 
         /// <summary>
         /// Required salt used for key derivation and coin table generation.
         /// Acts as the initialization entropy for PBKDF2 or other seed-based mechanisms.
         /// </summary>
-        public byte[] Salt { get; set; } = salt;
+        public byte[] Salt { get; } = salt;
 
         /// <summary>
         /// Optional zone-specific label. 
         /// If set, it is appended to the password before cryptographic key (CBox) generation.
         /// If null, standard password-only behavior is used.
         /// </summary>
-        public string ZoneInfo { get; set; } = zoneInfo;
+        public byte[]? ZoneInfo { get; } = zoneInfo;
 
         /// <summary>
         /// Flags for CryptoLib Behaviors.
         /// </summary>
-        public Behaviors Behavior { get; set; } = behavior;
+        public Behaviors Behavior { get; } = behavior;
     }
 
     [Flags]
@@ -152,12 +152,8 @@ namespace Mango.Cipher
         private (byte[] CoinTable, byte[] InverseCoinTable) GenerateCoinTable(byte[] seed)
         {
             byte[] derivedPassword = seed;
-            byte[] derivedZone = null!;
-            bool hasZoneInfo = !string.IsNullOrEmpty(Options.ZoneInfo);
-
-            // 🔄 If ZoneInfo is provided, convert to bytes
-            if (hasZoneInfo)
-                derivedZone = Encoding.UTF8.GetBytes(Options.ZoneInfo);
+            byte[]? derivedZone = Options.ZoneInfo;
+            bool hasZoneInfo = derivedZone is { Length: > 0 };
 
             // 🔐 Apply PBKDF2 if enabled
             if ((Options.Behavior & Behaviors.Rfc2898) != 0)
@@ -181,7 +177,7 @@ namespace Mango.Cipher
                     derivedPassword = pwDerive.GetBytes(32); // 256-bit
 
                     // 🌐 Derive ZoneInfo component if present
-                    if (hasZoneInfo)
+                    if (hasZoneInfo && derivedZone != null)
                     {
                         using var ziDerive = new Rfc2898DeriveBytes(derivedZone, salt, iterations, HashAlgorithmName.SHA256);
                         derivedZone = ziDerive.GetBytes(32); // 256-bit
@@ -195,7 +191,7 @@ namespace Mango.Cipher
             }
 
             // 📦 Combine both sources before shuffling
-            byte[] combinedSeed = hasZoneInfo
+            byte[] combinedSeed = hasZoneInfo && derivedZone != null
                 ? derivedPassword.Concat(derivedZone).ToArray()
                 : derivedPassword;
 
@@ -224,21 +220,6 @@ namespace Mango.Cipher
         }
 
         /// <summary>
-        /// 🔐 Generates the CBox by hashing the raw input and delegating to the core generator.
-        /// Used during encryption when input data is available.
-        /// </summary>
-        public void GenerateCBoxFromInput(byte[] input)
-        {
-            if (input == null || input.Length == 0)
-                throw new ArgumentException("Input cannot be null or empty for CBox generation.");
-
-            using var sha256 = SHA256.Create();
-            var hash = sha256.ComputeHash(input);
-            GenerateCBoxFromInputHash(hash);
-        }
-
-
-        /// <summary>
         /// 🔁 Regenerates the same CBox using the previously stored SHA-256 hash of the input.
         /// Used during decryption.
         /// </summary>
@@ -252,44 +233,38 @@ namespace Mango.Cipher
         }
 
         /// <summary>
-        /// 🧠 Generates the CBox and InverseCBox used for adaptive transform behavior.
+        /// 🎯 Generates the CBox and InverseCBox used for adaptive transform behavior.
         ///
-        /// 🔄 This function derives a 256-byte substitution box from the **raw input data** (or its hash).
-        /// Unlike the CoinTable, the CBox intentionally **preserves the "signal" of the input** — including
-        /// its spikiness, entropy patterns, and structure. It is used to shape:
-        ///     - Input-sensitive substitution behavior
-        ///     - Feedback-aware masking or mutation
-        ///     - Transform adaptivity during encryption
+        /// This method produces a deterministic 256-byte substitution table using a basic Fisher-Yates shuffle
+        /// driven by the provided hash seed. The same seed will always produce the same CBox, allowing
+        /// consistent but input-specific shaping behavior across encryption runs.
         ///
-        /// 🚫 No PBKDF2 normalization is applied — this is by design, to **retain high signal** characteristics
-        /// of the input and allow Mango's cryptographic behavior to adapt accordingly.
+        /// 🔍 Purpose:
+        /// - Encodes structural variability into Mango’s transform logic
+        /// - Enables consistent transform shaping tied to the input hash
+        /// - Provides both forward and inverse mapping for use in reversible operations
         ///
-        /// 🧠 Key Design Intent:
-        ///     - Reflects input structure (not password)
-        ///     - Maximizes entropy spikes and variation
-        ///     - Introduces **high-signal**, input-sensitive shaping into transform behavior
+        /// 💡 Design Notes:
+        /// - The input seed is expected to be a precomputed cryptographic hash (e.g., SHA-256)
+        /// - The shuffle uses simple byte cycling without further hashing or expansion
         /// </summary>
         private (byte[] CBox, byte[] InverseCBox) GenerateCBox(byte[] seed)
         {
             if (seed == null || seed.Length == 0)
                 throw new ArgumentException("Seed cannot be null or empty for CBox generation.");
 
-            // Step 2: Perform Fisher-Yates shuffle
             var cbox = new byte[256];
             var inv = new byte[256];
             for (int i = 0; i < 256; i++) cbox[i] = (byte)i;
 
-            using (var sha256 = SHA256.Create())
+            // Use seed directly for deterministic shuffle — no additional hashing
+            int hashIndex = 0;
+            for (int i = 255; i > 0; i--)
             {
-                var hash = sha256.ComputeHash(seed);
-                var hashIndex = 0;
-                for (int i = 255; i > 0; i--)
-                {
-                    var j = hash[hashIndex % hash.Length];
-                    var swapIndex = (j + i) % (i + 1);
-                    Swap(cbox, i, swapIndex);
-                    hashIndex++;
-                }
+                var b = seed[hashIndex % seed.Length];
+                int swapIndex = (b + i) % (i + 1);
+                Swap(cbox, i, swapIndex);
+                hashIndex++;
             }
 
             for (int i = 0; i < 256; i++)
@@ -2107,12 +2082,19 @@ namespace Mango.Cipher
             if (Options.Salt!.Length != SaltLength)
                 throw new ArgumentException($"Salt must be {SaltLength} bytes.");
 
-            // 🔄 Derive input-specific CBox to adapt transform behavior based on input structure
-            GenerateCBoxFromInput(input);
+            // 🔐 Derive CBox hash from both input and CoinTable
+            // 
+            // By combining the raw input data with the CoinTable (itself derived from password + ZoneInfo),
+            // this hash ensures the resulting CBox is:
+            //   - Input-sensitive (captures data structure)
+            //   - Context-bound (differs across users and sessions)
+            //   - Resistant to known-plaintext analysis (attackers can't infer the CBox)
+            //
+            // This blended hash drives the adaptive CBox behavior without exposing predictable patterns.
+            var hash = GetCBoxHash(input, _coinTable!);
 
-            // ✅ Compute a hash of the input data — used for CBox reconstruction during decryption
-            using var sha256 = SHA256.Create();
-            var hash = sha256.ComputeHash(input);
+            // 🔄 Derive input-specific CBox to adapt transform behavior based on input structure
+            GenerateCBoxFromInputHash(hash);
 
             // ✅ Use session-derived coin table (already generated from password/zone at construction)
             var coins = _coinTable;
@@ -2155,6 +2137,13 @@ namespace Mango.Cipher
             return fullOutput;
         }
 
+        private byte[] GetCBoxHash(byte[] part1, byte[] part2)
+        {
+            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            hasher.AppendData(part1);
+            hasher.AppendData(part2);
+            return hasher.GetHashAndReset();
+        }
         private byte[] Decrypt(InputProfile profile, byte[] fullInput)
         {
             if (profile == null) throw new ArgumentNullException(nameof(profile));
