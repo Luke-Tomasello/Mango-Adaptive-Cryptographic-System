@@ -53,9 +53,59 @@ public static class RegressionTests
         RunTest(RoundsVsLengthTest, localEnv, "Rounds vs Length Test");
         RunTest(AesSanityTest, localEnv, "AES Sanity Test");
         RunTest(RunMesaToleranceTest, localEnv, "Run Mesa Tolerance Test");
+        RunTest(TomaselloSignatureVectorRegressionTest, localEnv, "Tomasello SignatureVector Regression Test");
 
         if (IsInteractiveWorkbench(parentEnv))
             PressAnyKey();
+    }
+    private static void TomaselloSignatureVectorRegressionTest(ExecutionEnvironment localEnv)
+    {
+        string outputPath = Path.Combine(MangoPaths.GetProjectOutputDirectory(), "TomaselloSignatureVector.json");
+        Dictionary<string, string> expected = File.Exists(outputPath)
+            ? JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(outputPath)) ?? new()
+            : new();
+
+        var updated = new Dictionary<string, string>();
+        var inputTypes = Enum.GetValues<InputType>().ToList();//.Where(t => t != InputType.UserData).ToList();
+
+        foreach (var inputType in inputTypes)
+        {
+            using (new LocalEnvironment(localEnv))
+            {
+                localEnv.Globals.UpdateSetting("InputType", inputType);
+                var input = localEnv.Globals.Input;
+                var tsv = TomaselloSignatureVector.Compute(input, out var flags);
+                var pretty = TSVPrettyPrinter.PrettyPrint(tsv, flags);
+                var joined = string.Join("\n", pretty);
+                
+                ColorConsole.WriteLine($"\n📥 InputType: {inputType}:{Convert.ToHexString(tsv)}\n");
+
+                ColorConsole.WriteLine($"\n📥 InputType: {inputType}\n{joined}\n");
+
+                var base64 = Convert.ToBase64String(tsv);
+                string key = inputType.ToString();
+                updated[key] = base64;
+
+                if (expected.TryGetValue(key, out var known))
+                {
+                    if (known != base64)
+                    {
+                        ColorConsole.WriteLine("<red>⚠️ TSV mismatch for " + key + "</red>");
+                    }
+                    else
+                    {
+                        ColorConsole.WriteLine("<green>✅ TSV matches expected for " + key + "</green>");
+                    }
+                }
+                else
+                {
+                    ColorConsole.WriteLine("<yellow>📁 No baseline TSV found for " + key + ". Adding new entry.</yellow>");
+                }
+            }
+        }
+
+        File.WriteAllText(outputPath, JsonSerializer.Serialize(updated, new JsonSerializerOptions { WriteIndented = true }));
+        Console.WriteLine("\n✅ TSV regression file written to: " + outputPath);
     }
 
     public static void RunMesaToleranceTest(ExecutionEnvironment parentEnv)
