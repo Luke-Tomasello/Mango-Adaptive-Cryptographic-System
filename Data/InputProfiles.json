@@ -2,42 +2,24 @@
   "Combined.Best": {
     "Sequence": [
       [
+        18,
+        1
+      ],
+      [
+        45,
+        3
+      ],
+      [
+        6,
+        8
+      ],
+      [
         4,
         7
-      ],
-      [
-        4,
-        8
-      ],
-      [
-        31,
-        8
-      ],
-      [
-        15,
-        1
       ]
     ],
-    "GlobalRounds": 8,
-    "AggregateScore": 92.37780111678597
-  },
-  "Combined.Fast": {
-    "Sequence": [
-      [
-        13,
-        1
-      ],
-      [
-        24,
-        1
-      ],
-      [
-        33,
-        1
-      ]
-    ],
-    "GlobalRounds": 6,
-    "AggregateScore": 92.37605156134563
+    "GlobalRounds": 7,
+    "AggregateScore": 92.37515654266025
   },
   "Default.Best": {
     "Sequence": [
@@ -63,7 +45,7 @@
       ]
     ],
     "GlobalRounds": 6,
-    "AggregateScore": 89.98176037874063
+    "AggregateScore": 85.14763283310766
   },
   "Default.Fast": {
     "Sequence": [
@@ -89,100 +71,20 @@
       ]
     ],
     "GlobalRounds": 6,
-    "AggregateScore": 89.96160435101592
+    "AggregateScore": 82.75964762981043
   },
   "Natural.Best": {
     "Sequence": [
       [
         22,
-        1
+        2
       ],
       [
-        18,
-        1
-      ],
-      [
-        6,
-        1
-      ],
-      [
-        47,
-        1
-      ]
-    ],
-    "GlobalRounds": 3,
-    "AggregateScore": 92.37642270933925
-  },
-  "Natural.Fast": {
-    "Sequence": [
-      [
-        1,
-        1
+        20,
+        3
       ],
       [
         9,
-        1
-      ],
-      [
-        6,
-        1
-      ]
-    ],
-    "GlobalRounds": 3,
-    "AggregateScore": 92.37235775913767
-  },
-  "Random.Best": {
-    "Sequence": [
-      [
-        41,
-        1
-      ],
-      [
-        33,
-        1
-      ],
-      [
-        2,
-        1
-      ],
-      [
-        11,
-        1
-      ]
-    ],
-    "GlobalRounds": 3,
-    "AggregateScore": 92.37832086589415
-  },
-  "Random.Fast": {
-    "Sequence": [
-      [
-        11,
-        1
-      ],
-      [
-        16,
-        1
-      ],
-      [
-        39,
-        1
-      ]
-    ],
-    "GlobalRounds": 3,
-    "AggregateScore": 92.37645927086214
-  },
-  "Sequence.Best": {
-    "Sequence": [
-      [
-        11,
-        1
-      ],
-      [
-        26,
-        1
-      ],
-      [
-        4,
         1
       ],
       [
@@ -190,25 +92,127 @@
         1
       ]
     ],
-    "GlobalRounds": 5,
-    "AggregateScore": 92.37689842654004
+    "GlobalRounds": 1,
+    "AggregateScore": 89.48768388028438
+  },
+  "Natural.Fast": {
+    "Sequence": [
+      [
+        11,
+        4
+      ],
+      [
+        28,
+        1
+      ],
+      [
+        4,
+        1
+      ]
+    ],
+    "GlobalRounds": 1,
+    "AggregateScore": 73.64507362961484
+  },
+  "Random.Best": {
+    "Sequence": [
+      [
+        29,
+        5
+      ],
+      [
+        24,
+        2
+      ],
+      [
+        47,
+        3
+      ]
+    ],
+    "GlobalRounds": 8,
+    "AggregateScore": 90.46375243332801
+  },
+  "Random.Fast": {
+    "Sequence": [
+      [
+        13,
+        2
+      ],
+      [
+        47,
+        1
+      ],
+      [
+        18,
+        1
+      ],
+      [
+        13,
+        1
+      ]
+    ],
+    "GlobalRounds": 1,
+    "AggregateScore": 89.97139632924124
+  },
+  "Sequence.Best": {
+    "Sequence": [
+      [
+        1,
+        7
+      ],
+      [
+        47,
+        4
+      ],
+      [
+        18,
+        2
+      ],
+      [
+        45,
+        1
+      ]
+    ],
+    "GlobalRounds": 9,
+    "AggregateScore": 92.35971628175534
   },
   "Sequence.Fast": {
     "Sequence": [
       [
-        24,
-        1
-      ],
-      [
         1,
+        4
+      ],
+      [
+        47,
+        2
+      ],
+      [
+        18,
         1
       ],
       [
-        9,
+        45,
         1
       ]
     ],
-    "GlobalRounds": 5,
-    "AggregateScore": 92.3741272983008
+    "GlobalRounds": 1,
+    "AggregateScore": 86.14536827795082
+  },
+  "Combined.Fast": {
+    "Sequence": [
+      [
+        15,
+        5
+      ],
+      [
+        13,
+        1
+      ],
+      [
+        8,
+        1
+      ]
+    ],
+    "GlobalRounds": 6,
+    "AggregateScore": 92.37166457812893
   }
 }
