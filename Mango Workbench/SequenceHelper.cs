@@ -200,6 +200,16 @@ public class SequenceHelper
     }
 
     #region Utilities
+    public int GetGlobalRounds(ParsedSequence parsed)
+    {
+        if (parsed == null)
+            throw new ArgumentNullException(nameof(parsed));
+
+        return parsed.SequenceAttributes.TryGetValue("GR", out var grValue) && int.TryParse(grValue, out var gr)
+            ? gr
+            : 1; // Default fallback if not set
+    }
+
 
     /// Chunks a list of transform strings into lines of fixed size with optional indentation.
     public static string ChunkedSequence(List<string> transforms, int chunkSize, bool indent)

@@ -742,9 +742,12 @@ public static class MangoConsole
             {
                 // Load god-sequence based on current input
                 var godProfile = InputProfiler.GetInputProfile(localEnv.Globals.Input, localEnv.Globals.Mode, localEnv.Globals.ScoringMode);
-                SequenceHelper seqHelper = new(localEnv.Crypto);
-                //var selectedSequence = seqHelper.FormattedSequence(godProfile);
+                // all subsystems use the global rounds from the profile, but we set it here for display purposes
+                localEnv.Globals.UpdateSetting("Rounds", godProfile.GlobalRounds);
+                
+                // set the sequence to the god-sequence just loaded
                 sequence.Clear();
+                SequenceHelper seqHelper = new(localEnv.Crypto);
                 sequence.AddRange(seqHelper.FormattedSequence<List<string>>(godProfile));
 
                 var cmd = match.Groups["cmd"].Value.Trim();
@@ -807,6 +810,9 @@ public static class MangoConsole
                         statusColor = ConsoleColor.Red;
                         return;
                     }
+
+                    // all subsystems use the global rounds from the profile, but we set it here for display purposes
+                    localEnv.Globals.UpdateSetting("Rounds", seqHelper.GetGlobalRounds(parsedSequence));
 
                     // ✅ Store in the command interpreter's sequence list (Proper structure, no more single-string issues)
                     sequence.Clear();
