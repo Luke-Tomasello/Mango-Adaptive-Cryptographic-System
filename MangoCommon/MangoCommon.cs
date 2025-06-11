@@ -92,33 +92,39 @@ public static class MangoPaths
     private static string? _resolvedBaseDirectory;
     private static string? _resolvedDataDirectory;
 
-    public static string GetProgectBaseDirectory()
+    public static string GetProjectBaseDirectory()
     {
         if (_resolvedBaseDirectory != null)
             return _resolvedBaseDirectory;
 
-        var current = AppContext.BaseDirectory;
-        var marker = "Mango Systems";
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        var anchorFolderName = "Mango Workbench";
 
-        // Build list of probe paths in order of preference
-        var probePaths = new List<string>();
+        // Walk up the directory tree until we find "Mango Workbench"
+        while (current != null && !current.Name.Equals(anchorFolderName, StringComparison.OrdinalIgnoreCase))
+        {
+            current = current.Parent;
+        }
 
-        var markerIndex = current.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        if (markerIndex >= 0)
-            probePaths.Add(current.Substring(0, markerIndex + marker.Length));
+        // If we found the anchor folder, return its parent
+        if (current?.Parent != null)
+        {
+            _resolvedBaseDirectory = current.Parent.FullName;
+            return _resolvedBaseDirectory;
+        }
 
-        probePaths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Mango"));
-        probePaths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Mango"));
-        probePaths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Mango"));
-        probePaths.Add(current); // Fallback
+        // Fallbacks: known application data locations or current base
+        var fallbackPaths = new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Mango"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Mango"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Mango"),
+            AppContext.BaseDirectory // Last resort
+        };
 
-        // Normalize all candidate paths
-        probePaths = probePaths
-            .Select(p => Path.GetFullPath(p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)))
-            .ToList();
+        _resolvedBaseDirectory = fallbackPaths.FirstOrDefault(Directory.Exists)
+                                 ?? Path.GetFullPath(AppContext.BaseDirectory);
 
-        // Use the first path that exists
-        _resolvedBaseDirectory = probePaths.FirstOrDefault(Directory.Exists) ?? Path.GetFullPath(current);
         return _resolvedBaseDirectory;
     }
 
@@ -127,7 +133,7 @@ public static class MangoPaths
         if (_resolvedDataDirectory != null)
             return _resolvedDataDirectory;
 
-        var baseDir = GetProgectBaseDirectory();
+        var baseDir = GetProjectBaseDirectory();
         var dataDir = Path.Combine(baseDir, "Data");
 
         _resolvedDataDirectory = Directory.Exists(dataDir)
@@ -139,14 +145,14 @@ public static class MangoPaths
 
     public static string GetProjectOutputDirectory()
     {
-        var path = Path.Combine(MangoPaths.GetProgectBaseDirectory(), "Output");
+        var path = Path.Combine(MangoPaths.GetProjectBaseDirectory(), "Output");
         Directory.CreateDirectory(path); // Ensure it exists
         return path;
     }
     //Contender Archive
     public static string GetProjectDirectory(string folder)
     {
-        var path = Path.Combine(MangoPaths.GetProgectBaseDirectory(), folder);
+        var path = Path.Combine(MangoPaths.GetProjectBaseDirectory(), folder);
         Directory.CreateDirectory(path); // Ensure it exists
         return path;
     }
