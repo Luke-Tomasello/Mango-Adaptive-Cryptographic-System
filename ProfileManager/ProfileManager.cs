@@ -161,7 +161,7 @@ namespace Mango.ProfileManager
                 return false;
             }
 
-            string sequenceLine = lines.Skip(index).FirstOrDefault(l => l.Trim().StartsWith("Sequence:"))?.Trim();
+            string sequenceLine = lines.Skip(index).FirstOrDefault(l => l.Trim().StartsWith("Sequence:"))?.Trim()!;
             if (string.IsNullOrWhiteSpace(sequenceLine))
             {
                 return false;

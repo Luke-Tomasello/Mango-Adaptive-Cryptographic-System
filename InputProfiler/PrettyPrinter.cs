@@ -41,13 +41,13 @@ public static class TSVPrettyPrinter
         {
             byte b = tsv[i];
 
-            string label = i switch
+            string label = (i switch
             {
                 16 => "Entropy",
                 17 => "TokenVar",
                 18 => "Repetition",
                 _ => null
-            };
+            })!;
             if (label == null)
                 continue;
 
