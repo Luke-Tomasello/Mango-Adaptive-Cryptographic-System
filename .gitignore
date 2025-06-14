@@ -55,3 +55,5 @@ ehthumbs.db
 /Docs/~$ngoDocumentation.docx
 /Docs/~$od Tough Ml Guide.docx
 /Mango Workbench/Mango.csproj
+/Mango Workbench/Runtime/ConsoleState.json
+/Mango Workbench/Runtime/GlobalSettings.json
