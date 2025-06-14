@@ -224,7 +224,7 @@ public static class RegressionTests
         out List<string> failedMetrics)
     {
         var crypto = env.Crypto;
-        var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+        var encrypted = crypto.Encrypt(profile, input);
         var payload = crypto.GetPayloadOnly(encrypted);
 
         var (avalanche, _, keydep, _) =
@@ -319,7 +319,7 @@ public static class RegressionTests
             var crypto = new CryptoLib(GlobalsInstance.Password, new CryptoLibOptions(Scoring.MangoSalt));
 
             var sw = Stopwatch.StartNew();
-            var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            var encrypted = crypto.Encrypt(profile, localEnv.Globals.Input);
             sw.Stop();
 
             var payload = crypto.GetPayloadOnly(encrypted);
@@ -395,14 +395,14 @@ public static class RegressionTests
 
             var optionsPBK = new CryptoLibOptions(salt, behavior: Behaviors.Rfc2898);
             var cryptoPBK = new CryptoLib(password, optionsPBK);
-            var payloadPBK = cryptoPBK.GetPayloadOnly(cryptoPBK.Encrypt(profile.Sequence, profile.GlobalRounds, input));
+            var payloadPBK = cryptoPBK.GetPayloadOnly(cryptoPBK.Encrypt(profile, input));
             var (avalanche1, _, keydep1, _) = ProcessAvalancheAndKeyDependency(cryptoPBK, input, password, profile);
             var resultsPBK = localEnv.CryptoAnalysis.RunCryptAnalysis(payloadPBK, avalanche1, keydep1, input);
             scoreWithPBKDF2 = localEnv.CryptoAnalysis.CalculateAggregateScore(resultsPBK, localEnv.Globals.ScoringMode);
 
             var optionsRaw = new CryptoLibOptions(salt, behavior: Behaviors.None);
             var cryptoRaw = new CryptoLib(password, optionsRaw);
-            var payloadRaw = cryptoRaw.GetPayloadOnly(cryptoRaw.Encrypt(profile.Sequence, profile.GlobalRounds, input));
+            var payloadRaw = cryptoRaw.GetPayloadOnly(cryptoRaw.Encrypt(profile, input));
             var (avalanche2, _, keydep2, _) = ProcessAvalancheAndKeyDependency(cryptoRaw, input, password, profile);
             var resultsRaw = localEnv.CryptoAnalysis.RunCryptAnalysis(payloadRaw, avalanche2, keydep2, input);
             scoreWithoutPBKDF2 = localEnv.CryptoAnalysis.CalculateAggregateScore(resultsRaw, localEnv.Globals.ScoringMode);
@@ -448,7 +448,7 @@ public static class RegressionTests
                 var options = new CryptoLibOptions(salt);
                 var crypto = new CryptoLib(password, options);
 
-                var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+                var encrypted = crypto.Encrypt(profile, localEnv.Globals.Input);
                 var payload = crypto.GetPayloadOnly(encrypted);
                 var decrypted = crypto.Decrypt(encrypted);
 
@@ -568,7 +568,7 @@ public static class RegressionTests
                 {
                     var testInput = fullInput.Take(len).ToArray();
 
-                    var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, testInput);
+                    var encrypted = localEnv.Crypto.Encrypt(profile, testInput);
                     if (encrypted.SequenceEqual(testInput))
                         throw new Exception($"[GodSeq] Encryption failed to alter buffer (InputType={inputType}, len={len})");
 
@@ -606,7 +606,7 @@ public static class RegressionTests
                     );
 
                     // Encrypt
-                    var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, testInput);
+                    var encrypted = localEnv.Crypto.Encrypt(profile, testInput);
 
                     // Verify it alters input (only if transform != inverse)
                     if (id != inverseId && encrypted.SequenceEqual(testInput))
@@ -651,7 +651,7 @@ public static class RegressionTests
         var profile = InputProfiler.GetInputProfile(inputBlocks[0], OperationModes.Cryptographic, ScoringModes.Practical);
 
         List<byte[]> outputBlocks = new();
-        var encryptedFirst = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, inputBlocks[0]);
+        var encryptedFirst = crypto.Encrypt(profile, inputBlocks[0]);
         outputBlocks.Add(encryptedFirst);
 
         for (var i = 1; i < inputBlocks.Count; i++)
@@ -711,7 +711,7 @@ public static class RegressionTests
             globalRounds: 1
         );
 
-        var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, sampleInput);
+        var encrypted = localEnv.Crypto.Encrypt(profile, sampleInput);
         var decrypted = localEnv.Crypto.Decrypt(encrypted); // ✅ Header-driven decryption
 
         if (!decrypted.SequenceEqual(sampleInput))
@@ -721,7 +721,7 @@ public static class RegressionTests
             throw new Exception("Input corruption detected: original input was modified.");
 
         // test two
-        encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, sampleInput);
+        encrypted = localEnv.Crypto.Encrypt(profile, sampleInput);
 
         // 🔄 Step 3: Simulate decrypting on a new session / machine
         var crypto = new CryptoLib(GlobalsInstance.Password, localEnv.Crypto.Options);
@@ -845,7 +845,7 @@ public static class RegressionTests
         {
             var crypto = new CryptoLib(GlobalsInstance.Password, new CryptoLibOptions(Scoring.MangoSalt, behavior: test.Behavior));
 
-            var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            var encrypted = crypto.Encrypt(profile, localEnv.Globals.Input);
             var payload = crypto.GetPayloadOnly(encrypted);
             var decrypted = crypto.Decrypt(encrypted);
 
@@ -987,7 +987,7 @@ public static class RegressionTests
                     tRs: new[] { (byte)1 },
                     globalRounds: 1
                 );
-                var encrypted = localEnv.Crypto.Encrypt(forwardProfile.Sequence, forwardProfile.GlobalRounds, input);
+                var encrypted = localEnv.Crypto.Encrypt(forwardProfile, input);
 
                 var reverseProfile = InputProfiler.CreateInputProfile(name: "ReverseTest",
                     sequence: new[] { inverseId },
@@ -1000,7 +1000,7 @@ public static class RegressionTests
                     failed.Add($"Forward mismatch: {id} ({transform.Name}) ➡ {inverseId}");
 
                 // ✅ Reverse test: B ➡ A⁻¹ ➡ B
-                var inverseEncrypted = localEnv.Crypto.Encrypt(reverseProfile.Sequence, reverseProfile.GlobalRounds, input);
+                var inverseEncrypted = localEnv.Crypto.Encrypt(reverseProfile, input);
                 var roundTrip = localEnv.Crypto.Decrypt(inverseEncrypted);
 
                 if (!roundTrip.SequenceEqual(input))

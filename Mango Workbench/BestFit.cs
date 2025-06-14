@@ -1446,7 +1446,7 @@ public partial class Handlers
                              *
                              */
                             // 🔐 Encrypt using the profile
-                            var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+                            var encrypted = localEnv.Crypto.Encrypt(profile, localEnv.Globals.Input);
                             var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
 
                             // 🔓 Decrypt using header-based metadata (no manual reverseSequence needed)
@@ -2354,7 +2354,7 @@ public partial class Handlers
     {
         var sw = Stopwatch.StartNew();
         // 🔐 Encrypt using baked profile
-        var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+        var encrypted = localEnv.Crypto.Encrypt(profile, localEnv.Globals.Input);
         sw.Stop();
         encryptionElapsedTime = sw.Elapsed.TotalMilliseconds;
 
@@ -2536,7 +2536,7 @@ public partial class Handlers
                 );
 
                 // 🔐 Encrypt using profile
-                var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+                var encrypted = localEnv.Crypto.Encrypt(profile, localEnv.Globals.Input);
                 var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
 
                 // 🔓 Decrypt using header (no reverse sequence needed)

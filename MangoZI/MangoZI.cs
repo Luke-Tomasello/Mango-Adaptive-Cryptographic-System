@@ -44,7 +44,7 @@ internal class MangoZI
         var profile = InputProfiler.GetInputProfile(input, OperationModes.Cryptographic, ScoringModes.Practical);
 
         // 🔒 Step 4: Encrypt using adaptive configuration
-        var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+        var encrypted = crypto.Encrypt(profile, input);
 
         // 🔓 Step 5: Decrypt (CryptoLib pulls everything it needs from the header)
         var decrypted = crypto.Decrypt(encrypted);

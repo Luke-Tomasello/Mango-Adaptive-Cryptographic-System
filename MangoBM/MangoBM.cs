@@ -101,7 +101,7 @@ internal class MangoBM
 
         // 🔐 Step 3: Encrypt first block (header included)
         List<byte[]> outputBlocks = new();
-        var encryptedFirst = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, inputBlocks[0]);
+        var encryptedFirst = crypto.Encrypt(profile, inputBlocks[0]);
         outputBlocks.Add(encryptedFirst!);
 
         // 🔐 Step 4: Encrypt remaining blocks (headerless)

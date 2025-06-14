@@ -4064,7 +4064,7 @@ public static class UtilityHelpers
                 globalRounds: localEnv.Globals.Rounds);
 
             // 🔐 Encrypt using high-level profile API
-            var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            var encrypted = localEnv.Crypto.Encrypt(profile, localEnv.Globals.Input);
             var decrypted = localEnv.Crypto.Decrypt(encrypted);
 
             // 🔁 Ensure reversibility
@@ -4242,7 +4242,7 @@ public static class UtilityHelpers
 
             // Encrypt timing
             var sw = Stopwatch.StartNew();
-            var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, sampleInput);
+            var encrypted = localEnv.Crypto.Encrypt(profile, sampleInput);
             sw.Stop();
             var encryptTime = sw.Elapsed.TotalMilliseconds / profile.GlobalRounds;
 
@@ -4284,7 +4284,7 @@ public static class UtilityHelpers
                 );
 
                 var sw = Stopwatch.StartNew();
-                var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, sampleInput);
+                var encrypted = localEnv.Crypto.Encrypt(profile, sampleInput);
                 sw.Stop();
                 var encryptTime = sw.Elapsed.TotalMilliseconds / profile.GlobalRounds;
 

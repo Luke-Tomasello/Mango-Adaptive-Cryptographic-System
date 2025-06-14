@@ -120,7 +120,7 @@ public static class InputProfiler
             if (performance == EncryptionPerformanceMode.Best && name.EndsWith(".Fast", StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            var encrypted = cryptoLib.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+            var encrypted = cryptoLib.Encrypt(profile, input);
             var payload = cryptoLib.GetPayloadOnly(encrypted);
 
             var (avalanche, keydep) = ProcessAvalancheAndKeyDependency(cryptoLib, input, password, profile);

@@ -68,7 +68,7 @@ namespace Mango.ProfileManager
             OperationModes weightMode,
             ScoringModes scoringMode)
         {
-            var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+            var encrypted = crypto.Encrypt(profile, input);
             var payload = crypto.GetPayloadOnly(encrypted);
 
             var (avalanche, keydep) =

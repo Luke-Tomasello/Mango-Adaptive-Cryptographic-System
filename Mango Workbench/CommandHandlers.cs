@@ -77,7 +77,7 @@ public partial class Handlers
             try
             {
                 var sw = Stopwatch.StartNew();
-                var encrypted = cryptoLib.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+                var encrypted = cryptoLib.Encrypt(profile, input);
                 sw.Stop();
 
                 var payload = cryptoLib.GetPayloadOnly(encrypted);
@@ -193,7 +193,7 @@ public partial class Handlers
         var crypto = localEnv.Crypto;
         var input = localEnv.Globals.Input;
 
-        var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+        var encrypted = crypto.Encrypt(profile, input);
         var payload = crypto.GetPayloadOnly(encrypted);
 
         var (avalanche, _, keydep, _) =
@@ -536,7 +536,7 @@ public partial class Handlers
 
                 // Time encryption only
                 var sw = Stopwatch.StartNew();
-                var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+                var encrypted = crypto.Encrypt(profile, input);
                 sw.Stop();
                 var payload = crypto.GetPayloadOnly(encrypted);
 
@@ -638,7 +638,7 @@ public partial class Handlers
                     var input = env.Globals.Input;
 
                     var sw = Stopwatch.StartNew();
-                    var encrypted = crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+                    var encrypted = crypto.Encrypt(profile, input);
                     sw.Stop();
 
                     var payload = crypto.GetPayloadOnly(encrypted);
@@ -996,7 +996,7 @@ public partial class Handlers
                         var sw = Stopwatch.StartNew();
 
                         // 🔐 Encrypt using profile
-                        var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+                        var encrypted = localEnv.Crypto.Encrypt(profile, input);
 
                         // 🔓 New-style decryption (self-contained header)
                         var decrypted = localEnv.Crypto.Decrypt(encrypted);
@@ -1460,7 +1460,7 @@ public partial class Handlers
 
             // Encrypt using high-level API
             var transformInputCopy = previousEncrypted!.ToArray(); // Ensure original input is untouched
-            var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, transformInputCopy);
+            var encrypted = localEnv.Crypto.Encrypt(profile, transformInputCopy);
 
             // Extract payload (removes Mango header)
             var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
@@ -1623,7 +1623,7 @@ public partial class Handlers
                 performance: EncryptionPerformanceMode.Fast);
 
             List<byte[]> mangoEncryptedBlocks = new();
-            var encryptedFirst = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, inputBlocks[0]);
+            var encryptedFirst = localEnv.Crypto.Encrypt(profile, inputBlocks[0]);
             mangoEncryptedBlocks.Add(encryptedFirst);
 
             var swEncrypt = Stopwatch.StartNew();
@@ -1798,7 +1798,7 @@ public partial class Handlers
 
             // 🔒 Mango encryption
             var swMango = Stopwatch.StartNew();
-            var encryptedMango = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            var encryptedMango = localEnv.Crypto.Encrypt(profile, localEnv.Globals.Input);
             swMango.Stop();
             var mangoPayload = localEnv.Crypto.GetPayloadOnly(encryptedMango);
 
@@ -1894,7 +1894,7 @@ public partial class Handlers
             var profile = new InputProfile(bestProfile.Name, bestProfile.Sequence, bestProfile.GlobalRounds, bestProfile.AggregateScore);
             localEnv.CryptoAnalysis.Initialize();
 
-            var mangoEncrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            var mangoEncrypted = localEnv.Crypto.Encrypt(profile, localEnv.Globals.Input);
             var mangoPayload = localEnv.Crypto.GetPayloadOnly(mangoEncrypted);
 
             var aesEncrypted = AesEncrypt(localEnv.Globals.Input, GlobalsInstance.Password, out var saltLen, out var padLen);
@@ -2057,7 +2057,7 @@ public partial class Handlers
             var options = new CryptoLibOptions(Scoring.MangoSalt);
             var cryptoLib = new CryptoLib(GlobalsInstance.Password, options);
 
-            var MangoEncrypted = cryptoLib.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            var MangoEncrypted = cryptoLib.Encrypt(profile, localEnv.Globals.Input);
             stopwatch.Stop();
             var MangoTime = stopwatch.Elapsed;
             var MangoPayload = cryptoLib.GetPayloadOnly(MangoEncrypted); // Extract payload for Mango encryption
@@ -2684,7 +2684,7 @@ public partial class Handlers
         );
 
         // 🔐 Encrypt using high-level profile API
-        var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+        var encrypted = localEnv.Crypto.Encrypt(profile, localEnv.Globals.Input);
         var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
 
         // 🧪 Generate Avalanche and Key Dependency outputs (no AES needed)
@@ -2979,7 +2979,7 @@ public partial class Handlers
             );
 
             // 🔐 Encrypt and verify reversibility
-            var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            var encrypted = localEnv.Crypto.Encrypt(profile, localEnv.Globals.Input);
             var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
             var decrypted = localEnv.Crypto.Decrypt(encrypted);
 
@@ -3127,7 +3127,7 @@ public partial class Handlers
 
             // 🔐 Encrypt using profile
             var stopwatch = Stopwatch.StartNew();
-            var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+            var encrypted = localEnv.Crypto.Encrypt(profile, localEnv.Globals.Input);
             stopwatch.Stop();
 
             var payload = localEnv.Crypto.GetPayloadOnly(encrypted);
@@ -3240,7 +3240,7 @@ public partial class Handlers
         var globalRounds = parsedSequence.SequenceAttributes.TryGetValue("GR", out var grStr)
                            && int.TryParse(grStr, out var parsedGR) ? parsedGR : localEnv.Globals.Rounds;
         var profile = InputProfiler.CreateInputProfile("Original", originalSequence, globalRounds);
-        var encrypted = localEnv.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, localEnv.Globals.Input);
+        var encrypted = localEnv.Crypto.Encrypt(profile, localEnv.Globals.Input);
         var decrypted = localEnv.Crypto.Decrypt(encrypted);
         var originalValid = decrypted.SequenceEqual(localEnv.Globals.Input);
 
@@ -3325,7 +3325,7 @@ public partial class Handlers
     private static (bool IsValid, double Score, List<CryptoAnalysisCore.AnalysisResult>? Metrics)
         TestAndScorePermutation(ExecutionEnvironment env, InputProfile profile)
     {
-        var encrypted = env.Crypto.Encrypt(profile.Sequence, profile.GlobalRounds, env.Globals.Input);
+        var encrypted = env.Crypto.Encrypt(profile, env.Globals.Input);
         var decrypted = env.Crypto.Decrypt(encrypted);
 
         if (!decrypted.SequenceEqual(env.Globals.Input))

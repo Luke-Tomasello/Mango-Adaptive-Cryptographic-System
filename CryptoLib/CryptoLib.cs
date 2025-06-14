@@ -31,6 +31,22 @@ using System.Text;
 
 namespace Mango.Cipher
 {
+    /// <summary>
+    /// Canonical definition of an encryption input profile, used to configure
+    /// the transform sequence and global rounds within CryptoLib.
+    /// 
+    /// While CryptoLib does not use the <c>Name</c> or <c>AggregateScore</c> fields
+    /// internally, they are included for convenience — allowing upstream tools like
+    /// Mango Workbench or profiling engines to carry metadata alongside the
+    /// execution parameters.
+    /// </summary>
+    public record InputProfile(
+        string Name,                    // e.g., "Combined", "Natural", etc. — Workbench-friendly label
+        (byte ID, byte TR)[] Sequence,  // Transform sequence with rounds baked in
+        int GlobalRounds,               // Required by core + Workbench for configuration
+        double AggregateScore = 0.0
+    );
+
     public class CryptoLibOptions(
         byte[] salt,
         byte[]? zoneInfo = null,
@@ -1727,12 +1743,6 @@ namespace Mango.Cipher
 
         #region API
 
-        public record InputProfile(
-            string Name, // e.g., "Combined", "Natural", etc. — Workbench-friendly label
-            (byte ID, byte TR)[] Sequence, // Transform sequence with rounds baked in
-            int GlobalRounds // Required by core + Workbench for configuration
-        );
-
         internal static class HeaderProfile
         {
             private const int GlobalRounds = 6;
@@ -1975,7 +1985,7 @@ namespace Mango.Cipher
         public byte[] Encrypt(byte[] input)
         {
             InputProfile headerProfile = HeaderProfile.GetHeaderProfile(this);
-            return Encrypt(headerProfile.Sequence, headerProfile.GlobalRounds, input);
+            return Encrypt(headerProfile, input);
         }
 
         public byte[] EncryptBlock(byte[] input)
@@ -2074,7 +2084,7 @@ namespace Mango.Cipher
             return data; // ✅ Decrypted plaintext
         }
 
-        private byte[] Encrypt(InputProfile profile, byte[] input)
+        public byte[] Encrypt(InputProfile profile, byte[] input)
         {
             Debug.Assert(profile.GlobalRounds <= byte.MaxValue);
 
@@ -2093,7 +2103,7 @@ namespace Mango.Cipher
             // This blended hash drives the adaptive CBox behavior without exposing predictable patterns.
             var hash = GetCBoxHash(input, _coinTable!);
 
-            // 🔄 Derive input-specific CBox to adapt transform behavior based on input structure
+            // 🔄 Derive input-specific CBox to adapt transform behavior based on input structure & coinTable
             GenerateCBoxFromInputHash(hash);
 
             // ✅ Use session-derived coin table (already generated from password/zone at construction)

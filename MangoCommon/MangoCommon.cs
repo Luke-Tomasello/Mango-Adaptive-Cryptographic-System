@@ -5,12 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 
 namespace Mango.Common;
-public record InputProfile(
-    string Name,                    // e.g., "Combined", "Natural", etc. — Workbench-friendly label
-    (byte ID, byte TR)[] Sequence,  // Transform sequence with rounds baked in
-    int GlobalRounds,               // Required by core + Workbench for configuration
-    double AggregateScore
-);
+
 public class InputProfileDto
 {
     public List<List<byte>> Sequence { get; set; } = new();
@@ -44,7 +39,7 @@ public class Scoring
         var modifiedPassword = Encoding.UTF8.GetString(modifiedPasswordBytes!);
 
         // 🔐 Avalanche: Mango encryption with modified input
-        var mangoAvalanchePayload = cryptoLib.Encrypt(profile.Sequence, profile.GlobalRounds, modifiedInput);
+        var mangoAvalanchePayload = cryptoLib.Encrypt(profile, modifiedInput);
         mangoAvalanchePayload = cryptoLib.GetPayloadOnly(mangoAvalanchePayload);
 
         // 🔑 KeyDependency: New CryptoLib with modified password and same rounds
@@ -53,7 +48,7 @@ public class Scoring
         );
         var keyDepCryptoLib = new CryptoLib(modifiedPassword, keyDepOptions);
 
-        var mangoKeyDependencyPayload = keyDepCryptoLib.Encrypt(profile.Sequence, profile.GlobalRounds, input);
+        var mangoKeyDependencyPayload = keyDepCryptoLib.Encrypt(profile, input);
         mangoKeyDependencyPayload = keyDepCryptoLib.GetPayloadOnly(mangoKeyDependencyPayload);
 
         return (mangoAvalanchePayload, mangoKeyDependencyPayload);
