@@ -75,9 +75,10 @@ namespace Mango.Cipher
         public byte[] Salt { get; } = salt;
 
         /// <summary>
-        /// Optional zone-specific label. 
-        /// If set, it is appended to the password before cryptographic key (CBox) generation.
-        /// If null, standard password-only behavior is used.
+        /// Optional zone-specific entropy source used in CoinTable generation.
+        /// If set, it is processed independently as a second factor alongside the password
+        /// during PBKDF2 derivation (when enabled) to enhance session randomness.
+        /// If null, only the password is used for CoinTable generation.
         /// </summary>
         public byte[]? ZoneInfo { get; } = zoneInfo;
 
@@ -2579,7 +2580,7 @@ namespace Mango.Cipher
 
     #endregion Utilities
 
-    #region TOM_Random
+    #region TomRandom
 
     internal class TomRandom
     {
@@ -2645,7 +2646,7 @@ namespace Mango.Cipher
         }
     }
 
-    #endregion TOM_Random
+    #endregion TomRandom
 }
 
 namespace Mango.Cipher
