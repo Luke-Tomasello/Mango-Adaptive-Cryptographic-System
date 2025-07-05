@@ -1,5 +1,7 @@
 # Mango — Adaptive Cryptographic Library & Workbench
 
+Mango Cryptography is an adaptive encryption system built for post-quantum security and modern cryptographic resilience.
+
 > ⚡ Significantly faster than AES on structured and synthetic data  
 > ✅ Passes all 9/9 cryptographic metrics  
 > 🔄 Fully reversible — optimized for structured, random, and real-world data
@@ -141,3 +143,9 @@ Ideal for exploring how Mango might integrate into streaming or block-wise syste
 > AES remains strong in raw throughput, but Mango performs competitively — and often outpaces AES on high-entropy inputs.  
 > Throughput varies by profile (`.Best` vs `.Fast`) and input type, reflecting Mango’s adaptive design.  
 > Unlike AES, Mango includes scoring, validation, and structural transforms as part of its core pipeline, not as optional layers.
+
+## 🔗 Links
+
+- 🌐 [Official Website (WordPress)](https://tomasello.com)
+- 💼 [LinkedIn](https://www.linkedin.com/in/luke-tomasello-216a8213)
+- 📽️ [YouTube Channel](https://www.youtube.com/@MangoCryptography)
